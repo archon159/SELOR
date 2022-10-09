@@ -1,4 +1,4 @@
-VERSION_NAME = 'rule_gen'
+VERSION_NAME = 'selor'
 
 import os
 import json

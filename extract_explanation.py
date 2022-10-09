@@ -1,4 +1,4 @@
-VERSION_NAME = 'exp_rule_gen'
+VERSION_NAME = 'exp_selor'
 
 import os
 import json

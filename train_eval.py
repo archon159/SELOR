@@ -185,7 +185,7 @@ def train_epoch(
                 outputs, _ = model(
                     inputs
                 )
-            elif model.model_name == 'rule_gen':
+            elif model.model_name == 'selor':
                 x_ = x_.to(gpu)
                 inputs = input_ids, attention_mask, x_
                 # Run the model
@@ -205,7 +205,7 @@ def train_epoch(
                 outputs, _ = model(
                     inputs
                 )
-            elif model.model_name == 'rule_gen':
+            elif model.model_name == 'selor':
                 x_ = x_.to(gpu)
                 inputs = x, x_
                 outputs, _, _ = model(
@@ -263,7 +263,7 @@ def eval_epoch(
                     outputs, _ = model(
                         inputs
                     )
-                elif model.model_name == 'rule_gen':
+                elif model.model_name == 'selor':
                     x_ = x_.to(gpu)
                     inputs = input_ids, attention_mask, x_
                     # Run the model
@@ -283,7 +283,7 @@ def eval_epoch(
                     outputs, _ = model(
                         inputs
                     )
-                elif model.model_name == 'rule_gen':
+                elif model.model_name == 'selor':
                     x_ = x_.to(gpu)
                     inputs = x, x_
                     outputs, _, _ = model(
@@ -412,7 +412,7 @@ def eval_model(
         target_probs = []
         answers = []
         
-        if model.model_name == 'rule_gen':
+        if model.model_name == 'selor':
             confidences = []
             consistencies = []
             duplicates = []
@@ -434,7 +434,7 @@ def eval_model(
                     outputs, _ = model(
                         inputs
                     )
-                elif model.model_name == 'rule_gen':
+                elif model.model_name == 'selor':
                     x_ = x_.to(gpu)
                     inputs = input_ids, attention_mask, x_
                     # Run the model
@@ -454,7 +454,7 @@ def eval_model(
                     outputs, _ = model(
                         inputs
                     )
-                elif model.model_name == 'rule_gen':
+                elif model.model_name == 'selor':
                     x_ = x_.to(gpu)
                     inputs = x, x_
                     outputs, atom_prob_list, cp_list = model(
@@ -466,7 +466,7 @@ def eval_model(
             else:
                 assert(0)
             
-            if model.model_name == 'rule_gen':
+            if model.model_name == 'selor':
                 # Get the list of chosen atoms
                 ind_list = []
                 for atom_prob in atom_prob_list:
@@ -546,7 +546,7 @@ def eval_model(
         target_probs = torch.stack(target_probs).cpu().tolist()
         answers = torch.stack(answers).cpu().tolist()
         
-        if model.model_name == 'rule_gen':
+        if model.model_name == 'selor':
             avg_confidence = torch.mean(torch.stack(confidences)).item()
             avg_consistency = torch.mean(torch.stack(consistencies)).item()
             avg_duplicate = torch.mean(torch.stack(duplicates)).item()
@@ -560,7 +560,7 @@ def eval_model(
         print(f'Avg Test Loss: {avg_test_loss:.4f}', file=feval, flush=True)
         print(f'Evaluation Time: {eval_time:.3f} s', file=feval, flush=True)
         
-        if model.model_name == 'rule_gen':
+        if model.model_name == 'selor':
             print(f'Confidence: {avg_confidence:.4f}', file=feval, flush=True)
             print(f'Consistency: {avg_consistency:.4f}', file=feval, flush=True)
             print(f'Duplicate: {avg_duplicate:.4f}', file=feval, flush=True)
