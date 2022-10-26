@@ -30,6 +30,7 @@ def parse_arguments(notebook=False):
     parser.add_argument('--pretrain_samples', type=int, default=10000, help='Number of samples for pretraining of consequent estimator.')
     parser.add_argument('--only_eval', action='store_true', help='Do only evaluation')
     parser.add_argument('--result_dir', type=str, default='result', help='The directory name to save results')
+    parser.add_argument('--save_dir', type=str, default='save_dir', help='The directory to save interim files')
     
     if notebook:
         args = parser.parse_args([])

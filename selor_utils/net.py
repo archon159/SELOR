@@ -77,7 +77,7 @@ class BaseModel(nn.Module):
         out = nn.functional.softmax(out, dim=1)
         out = torch.log(out)
         
-        return out, _, _
+        return out, h, _
     
 class ConsequentEstimator(nn.Module):
     def __init__(

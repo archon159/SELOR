@@ -494,38 +494,27 @@ def eval_model(
         
     eval_log.close()
         
-def get_train_embedding(
+def get_base_embedding(
     model,
     train_dataloader,
-    args,
+    gpu,
 ):
-    gpu = torch.device(f'cuda:{args.gpu}')
-    emb_list = []
+    assert(model.model_name == 'base')
+    
+    h_list = []
     
     model.eval()
     with torch.no_grad():
         for d in tqdm(train_dataloader):
-            if args.dataset in ['yelp', 'clickbait']:
-                input_ids, attention_mask, x_, y = d
-                input_ids = input_ids.to(gpu).squeeze(dim=1)
-                attention_mask = attention_mask.to(gpu).squeeze(dim=1)
-                y = y.to(gpu).squeeze(dim=1)
-                
-                inputs = input_ids, attention_mask
-                
-            elif args.dataset in ['adult']:
-                x, x_, y = d
-                x = x.to(gpu)
-                y = y.to(gpu).squeeze(dim=1)
+            inputs, y = d
+            inputs = [i.to(gpu) for i in inputs]
+            y = y.to(gpu)
+            batch_size = len(y)
 
-                inputs = x
-
-            # Run the model
-            assert(model.model_name == 'base')
-            _, emb = model(
+            outputs, h, _ = model(
                 inputs
             )
 
-            emb_list.append(emb.cpu())
-    embeddings = torch.cat(emb_list, dim=0)
+            h_list.append(h.cpu())
+    embeddings = torch.cat(h_list, dim=0)
     return embeddings
