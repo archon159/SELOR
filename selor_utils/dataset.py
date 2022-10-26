@@ -32,6 +32,30 @@ def get_base_type(base='bert'):
     else:
         raise NotImplementedError(f'Base model {base} is not supported.')
 
+def get_label_column(dataset='yelp'):
+    if dataset == 'yelp':
+        label = 'label'
+    elif dataset == 'clickbait':
+        label = 'label'
+    elif dataset == 'adult':
+        label = 'income'
+    else:
+        raise NotImplementedError(f'Dataset {dataset} is not supported.')
+        
+    return label
+        
+def get_pos_type(
+    dataset='yelp'
+):
+    if dataset=='yelp':
+        pos_type = ['text']
+    elif dataset=='clickbait':
+        pos_type = ['title', 'text']
+    else:
+        pos_type = []
+        
+    return pos_type
+    
 def get_class_names(dataset='yelp'):
     if dataset == 'yelp':
         class_names = ['Negative', 'Positive']
@@ -91,6 +115,8 @@ def numerize_tabular_data(data_df, cat_map, dataset='adult'):
     data_df = data_df.astype(float)
     for c in numerical_x_col:
         data_df[c] = data_df[c] / max(data_df[c])
+        
+    
         
     return data_df
         
@@ -340,6 +366,23 @@ class AdultDataset(Dataset):
         
         return (x, x_), y
         
+def load_tabular_info(
+    dataset='adult',
+    data_dir='./data/'
+):
+    data_path = f'{data_dir}/{dataset}'
+
+    if dataset=='adult':
+        data_df = pd.read_csv(f'{data_path}/adult.csv')
+    else:
+        raise NotImplementedError(f'Dataset {dataset} is not supported as a tabular dataset.')
+        
+    cat_map = get_tabular_category_map(data_df, dataset)
+    numerical_threshold = get_tabular_numerical_threshold(data_df, dataset=dataset)
+    numerical_max = get_tabular_numerical_max(data_df, dataset=dataset)
+    
+    return cat_map, numerical_threshold, numerical_max
+        
 def load_data(
     dataset='yelp',
     data_dir='./data/',
@@ -385,11 +428,10 @@ def load_data(
         
         data_df = pd.read_csv(f'{data_path}/adult.csv')
         categorical_x_col, numerical_x_col, y_col = get_tabular_column_type(dataset)
-        assert(set(data_df.columns) == set(categorical_x_col + numerical_x_col + y_col))
-        
         cat_map = get_tabular_category_map(data_df, dataset)
         
         number_data_df = numerize_tabular_data(data_df, cat_map, dataset)
+        number_data_df = number_data_df[numerical_x_col + categorical_x_col + y_col]
         dummy_data_df = pd.get_dummies(number_data_df, columns=categorical_x_col)
 #         print(dummy_data_df.columns)
 #         assert(0)

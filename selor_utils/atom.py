@@ -5,7 +5,7 @@ import re
 from tqdm import tqdm
 import pickle
 import torch
-from dataset import get_tabular_numerical_max
+from selor_utils import dataset as ds
 
 def get_true_matrix(atom_pool):
     n = atom_pool.num_atoms()
@@ -20,41 +20,32 @@ def get_true_matrix(atom_pool):
             tm[r.atom_idx, s] = 1
 
     return torch.tensor(tm).float().detach()
-
+    
 def get_word_count(
     df,
     tokenizer,
     dataset='yelp',
-    create=False,
-    save_path='',
 ):
-    assert(len(save_path) > 0)
+    pos_type = ds.get_pos_type(dataset)
+    wc = np.zeros((len(df), len(pos_type) * tokenizer.vocab_size))
+    for pos, pt in enumerate(pos_type):
+        for i, t in enumerate(df[pt]):
+            tokens = tokenizer.tokenize(t)
+            c = Counter(tokens)
 
-    if create:
-        if dataset=='yelp':
-            pos_type = ['text']
-        elif dataset=='clickbait':
-            pos_type = ['title', 'text']
-            
-        x_ = np.zeros((len(df), len(pos_type) * tokenizer.vocab_size))
-        for pos, pt in enumerate(pos_type):
-            for i, t in enumerate(tqdm(df[pt])):
-                tokens = tokenizer.tokenize(t)
-                c = Counter(tokens)
+            for k, v in c.items():
+                wc[i, pos * tokenizer.vocab_size + k] = v
 
-                for k, v in c.items():
-                    x_[i, pos * tokenizer.vocab_size + k] = v
-
-        with open(save_path, 'wb') as f:
-            pickle.dump(x_, f, pickle.HIGHEST_PROTOCOL)
-    else:
-        with open(save_path, 'rb') as f:
-            x_ = pickle.load(f)
-
-    return x_
+    return wc
 
 class AtomTokenizer():
-    def __init__(self, data_df, min_freq=10, max_len=512, dataset='yelp'):
+    def __init__(
+        self,
+        data_df,
+        dataset='yelp',
+        min_freq=10,
+        max_len=512
+    ):
         self.dataset = dataset
         if dataset=='yelp':
             data_list = data_df['text'].tolist()
@@ -114,13 +105,14 @@ class Atom():
         context, # For all kinds of dataset
         bigger, # For text, numeric, categorical. In categorical case, bigger==True means context == target
         target,
+        position, # For multiple input dataset
         n, 
         consequent,
         atom_idx,
-        position=0, # For multiple input dataset
         tokenizer=None, # For text
-        col_list=None, # For categorical or numeric
-        cat_map=None, # For categorical or numeric
+        cat_map=None, # For categorical
+        col2feature=None, # For categorical or numeric
+        numerical_max=None, # For numerical
         dataset='yelp',
     ):
         self.c_type = c_type
@@ -132,12 +124,11 @@ class Atom():
             self.feature_id = tokenizer.vocab_size * position + context
             self.bigger = bigger
         elif c_type == 'categorical':
-            self.feature_id = col_list.index(context)
+            self.feature_id = col2feature[(context, target)]
             self.bigger = bigger
         elif c_type == 'numerical':
-            self.feature_id = col_list.index(context)
+            self.feature_id = col2feature[(context, 0)]
             self.bigger = bigger
-            numerical_max = get_tabular_numerical_max(dataset=dataset)
             self.m = numerical_max[context]
         else:
             assert(0)
@@ -148,13 +139,8 @@ class Atom():
         self.atom_idx = atom_idx
         self.position = position
         
-        if dataset == 'yelp':
-            pos_type = ['text']
-        elif dataset == 'clickbait':
-            pos_type = ['title', 'text']
-        else:
-            pos_type = []
-        
+        pos_type = ds.get_pos_type(dataset)
+
         if c_type == 'text':
             if bigger:
                 self.display_str = f'({pos_type[position]}) {self.word} >= {target}'
@@ -196,9 +182,9 @@ class Atom():
                 
         elif self.c_type == 'categorical':
             if self.bigger:
-                ret = (x_[:, self.feature_id] == self.target)
+                ret = (x_[:, self.feature_id] >= 0.5)
             else:
-                ret = (x_[:, self.feature_id] != self.target)
+                ret = (x_[:, self.feature_id] < 0.5)
 
         elif self.c_type == 'dummy':
             ret = np.zeros(x_.shape[0])
@@ -217,30 +203,53 @@ class Atom():
 class AtomPool():
     def __init__(
         self,
-        tokenizer,
-        col_list,
-        cat_map,
-        train_x_,
-        train_y_,
+        train_x,
+        train_y,
         dataset='yelp',
+        tokenizer=None,
         alpha=1,
     ):
-        self.tokenizer = tokenizer
-        self.col_list = col_list
-        self.cat_map = cat_map
-        self.train_x_ = train_x_
-        self.train_y_ = train_y_
-
+        dtype = ds.get_dataset_type(dataset)
+            
+        self.train_x = train_x
+        self.train_y = train_y
         self.dataset = dataset
         self.alpha = alpha
-        self.n_class = len(set(train_y_))
+        self.n_class = len(set(train_y))
 
         self.atom_idx = 0
-
         self.atoms = OrderedDict()
         self.atom_id2key = []
         self.atom_satis_dict = {}
-    
+        
+        self.tokenizer = tokenizer
+        
+        if dtype == 'nlp':
+            assert(tokenizer != None)
+            self.cat_map = None
+            self.col2feature = None
+            self.numerical_max = None
+            
+        elif dtype == 'tab':
+            self.cat_map, self.numerical_threshold, self.numerical_max = ds.load_tabular_info(dataset=dataset)
+            self.categorical_x_col, self.numerical_x_col, self.y_col = ds.get_tabular_column_type(dataset=dataset)
+            
+            fi = 0
+            self.col2feature = {}
+            for c in self.numerical_x_col:
+                pair = (c, 0)
+                self.col2feature[pair] = fi
+                fi += 1
+            
+            for c in self.categorical_x_col:
+                d = self.cat_map[f'{c}_idx2key']
+                for i in d:
+                    pair = (c, i)
+                    self.col2feature[pair] = fi
+                    fi += 1
+                
+        else:
+            assert(0)
     def add_atom(
         self,
         c_type,
@@ -252,20 +261,26 @@ class AtomPool():
         atom_key = (c_type, context, bigger, target, position)
         
         if atom_key in self.atoms:
+            print(f'Atom {atom_key} already exists.')
             return
         
         consequent, n, ids = self.check_atom_consequent(c_type, context, bigger, target, position)
-        
-        if c_type == 'dummy':
-            r = Atom(c_type, None, None, None, n, consequent, self.atom_idx, dataset=self.dataset)
-        elif c_type == 'text':
-            r = Atom(c_type, context, bigger, target, n, consequent, self.atom_idx, position=position, tokenizer=self.tokenizer, dataset=self.dataset)
-        elif c_type == 'categorical':
-            r = Atom(c_type, context, bigger, target, n, consequent, self.atom_idx, col_list=self.col_list, cat_map=self.cat_map, dataset=self.dataset)
-        elif c_type == 'numerical':
-            r = Atom(c_type, context, bigger, target, n, consequent, self.atom_idx, col_list=self.col_list, cat_map=self.cat_map, dataset=self.dataset)
-        else:
-            assert(0)
+            
+        r = Atom(
+            c_type=c_type,
+            context=context,
+            bigger=bigger,
+            target=target,
+            position=position,
+            n=n,
+            consequent=consequent,
+            atom_idx=self.atom_idx,
+            tokenizer=self.tokenizer,
+            cat_map=self.cat_map,
+            col2feature=self.col2feature,
+            dataset=self.dataset,
+            numerical_max=self.numerical_max,
+        )
         
         self.atoms[atom_key] = r
         self.atom_id2key.append(atom_key)
@@ -281,45 +296,38 @@ class AtomPool():
         position,
     ):
         if c_type == 'dummy':
-            ids = np.array(range(len(self.train_x_)))
+            ids = np.array(range(len(self.train_x)))
             
         elif c_type == 'text':
             feature_id = self.tokenizer.vocab_size * position + context
             if bigger:
-                ids = np.where(self.train_x_[:, feature_id] >= target)[0]
+                ids = np.where(self.train_x[:, feature_id] >= target)[0]
             else:
-                ids = np.where(self.train_x_[:, feature_id] < target)[0]
+                ids = np.where(self.train_x[:, feature_id] < target)[0]
                 
         elif c_type == 'categorical':
-            feature_id = self.col_list.index(context)
+            feature_id = self.col2feature[(context, target)]
             if bigger:
-                ids = np.where(self.train_x_[:, feature_id] == target)[0]
+                ids = np.where(self.train_x[:, feature_id] >= 0.5)[0]
             else:
-                ids = np.where(self.train_x_[:, feature_id] != target)[0]
+                ids = np.where(self.train_x[:, feature_id] < 0.5)[0]
             
         elif c_type == 'numerical':
-            feature_id = self.col_list.index(context)
+            feature_id = self.col2feature[(context, 0)]
             if bigger:
-                ids = np.where(self.train_x_[:, feature_id] >= target)[0]
+                ids = np.where(self.train_x[:, feature_id] >= target)[0]
             else:
-                ids = np.where(self.train_x_[:, feature_id] < target)[0]
+                ids = np.where(self.train_x[:, feature_id] < target)[0]
         else:
             assert(0)
             
         n = len(ids)
-        if c_type == 'dummy':
-            consequent = []
-            for i in range(self.n_class):
-                prob = 1 / self.n_class
-                consequent.append(prob)
-                
-        else:
-            c = Counter(self.train_y_[ids])
-            consequent = []
+        c = Counter(self.train_y[ids])
+        consequent = []
 
-            for i in range(self.n_class):
-                prob = (c[i] + self.alpha) / (n + self.alpha * self.n_class)
-                consequent.append(prob)
+        for i in range(self.n_class):
+            prob = (c[i] + self.alpha) / (n + self.alpha * self.n_class)
+            consequent.append(prob)
         
         return consequent, n, ids
         
