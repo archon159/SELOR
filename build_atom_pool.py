@@ -174,8 +174,10 @@ if __name__ == "__main__":
         n_atom = ap.num_atoms()
         print(f'{n_atom} atoms added')
 
-        with open(f'./save_dir/atom_pool_{args.dataset}.pkl', 'wb') as f:
+        with open(f'./{args.save_dir}/atom_pool/atom_pool_{args.dataset}.pkl', 'wb') as f:
             pickle.dump(ap, f, pickle.HIGHEST_PROTOCOL)
+    else:
+        raise NotImplementedError("We only support NLP and tabular dataset now.")
             
     build_end = time.time()
     print(f'Building time: {build_end - build_start} s')

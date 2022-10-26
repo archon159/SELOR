@@ -12,7 +12,7 @@ def get_true_matrix(atom_pool):
     sd = atom_pool.atom_satis_dict
     targets = atom_pool.atoms
         
-    tm = np.zeros((n, len(atom_pool.train_x_)))
+    tm = np.zeros((n, atom_pool.n_data))
     
     for ri, satis in tqdm(sd.items()):
         r = targets[ri]
@@ -213,9 +213,11 @@ class AtomPool():
             
         self.train_x = train_x
         self.train_y = train_y
+
         self.dataset = dataset
         self.alpha = alpha
         self.n_class = len(set(train_y))
+        self.n_data = len(train_x)
 
         self.atom_idx = 0
         self.atoms = OrderedDict()
