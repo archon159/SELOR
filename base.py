@@ -16,6 +16,8 @@ if __name__ == "__main__":
     
     dtype = ds.get_dataset_type(args.dataset)
     btype = ds.get_base_type(args.base)
+    
+    assert(dtype==btype)
 
     seed = args.seed
     gpu = torch.device(f'cuda:{args.gpu}')

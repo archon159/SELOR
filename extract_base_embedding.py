@@ -45,6 +45,8 @@ if __name__ == "__main__":
     dtype = ds.get_dataset_type(args.dataset)
     btype = ds.get_base_type(args.base)
 
+    assert(dtype==btype)
+    
     seed = args.seed
     gpu = torch.device(f'cuda:{args.gpu}')
     utils.reset_seed(seed)
@@ -69,10 +71,10 @@ if __name__ == "__main__":
         shuffle=False
     )
         
-    if args.dataset in ds.NLP_DATASET:
+    if dtype == 'nlp':
         input_dim = config.hidden_size
         hidden_dim = config.hidden_size
-    elif args.dataset in ds.TAB_DATASET:
+    elif dtype == 'tab':
         input_dim = train_dataset.x.shape[1]
         hidden_dim = args.hidden_dim
     else:
@@ -101,7 +103,7 @@ if __name__ == "__main__":
     best_model_path = f'{base_path}/model_best.pt'
     
     # We use pre-trained model for NLP bases. 
-    if args.base in ds.TAB_BASE:
+    if btype == 'tab':
         model.load_state_dict(torch.load(best_model_path), strict=True)
     
     model = model.to(gpu)
