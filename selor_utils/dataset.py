@@ -10,107 +10,78 @@ import pickle
 import random
 from tqdm import tqdm
 
-def create_dataloader(dataset, args, shuffle):
-    return DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        shuffle=shuffle,
-        persistent_workers=False,
-        pin_memory=False,
-    )
-
-def get_dataset(
-    dataset='yelp',
-    seed=7,
-):
-    if dataset=='yelp':
-        # Negative = 0, Positive = 1
-        DATASET='yelp'
-        DATA_DIR = './data/yelp_review_polarity_csv'
-
-        train_df = pd.read_csv(f'{DATA_DIR}/train.csv', header=None)
-        train_df = train_df.rename(columns={0: 'label', 1: 'text'})
-        train_df['label'] = train_df['label'] - 1
-        _, train_df = train_test_split(train_df, test_size=0.1, random_state=seed, stratify=train_df['label'])
-
-        test_df = pd.read_csv(f'{DATA_DIR}/test.csv', header=None)
-        test_df = test_df.rename(columns={0: 'label', 1: 'text'})
-        test_df['label'] = test_df['label'] - 1
-
-        test_df = test_df.reset_index(drop=True)
-        test_df, valid_df = train_test_split(test_df, test_size=0.5, random_state=seed, stratify=test_df['label'])
-        
-        train_df = train_df.reset_index(drop=True)
-        valid_df = valid_df.reset_index(drop=True)
-        test_df = test_df.reset_index(drop=True)
-        
-        return train_df, valid_df, test_df
+NLP_DATASET = ['yelp', 'clickbait']
+NLP_BASE = ['bert', 'roberta']
     
-    elif dataset=='clickbait':
-        # news = 0, clickbait = 1
-        DATASET='clickbait'
-        DATA_DIR = './data/clickbait_news_detection'
+TAB_DATASET = ['adult']
+TAB_BASE = ['dnn']
 
-        train_df = pd.read_csv(f'{DATA_DIR}/train.csv')
-        train_df = train_df.loc[train_df['label'].isin(['news', 'clickbait']), ['title', 'text', 'label']]
-        train_df = train_df.dropna()
-        train_df.at[train_df['label']=='news', 'label'] = 0
-        train_df.at[train_df['label']=='clickbait', 'label'] = 1
-        
-        valid_df = pd.read_csv(f'{DATA_DIR}/valid.csv')
-        valid_df = valid_df.loc[valid_df['label'].isin(['news', 'clickbait']), ['title', 'text', 'label']]
-        valid_df = valid_df.dropna()
-        valid_df.at[valid_df['label']=='news', 'label'] = 0
-        valid_df.at[valid_df['label']=='clickbait', 'label'] = 1
-
-        test_df, valid_df = train_test_split(valid_df, test_size=0.5, random_state=seed, stratify=valid_df['label'])
-        
-        train_df = train_df.reset_index(drop=True)
-        valid_df = valid_df.reset_index(drop=True)
-        test_df = test_df.reset_index(drop=True)
-        
-        return train_df, valid_df, test_df
-    
-    elif dataset=='adult':
-        # <=50K = 0, >50K = 1
-        DATASET='adult'
-        DATA_DIR = './data/adult'
-        
-        data_df = pd.read_csv(f'{DATA_DIR}/adult.csv')
-        categorical_x_col, numerical_x_col, y_col = get_tabular_column_type(dataset)
-        assert(set(data_df.columns) == set(categorical_x_col + numerical_x_col + y_col))
-        
-        cat_map = get_tabular_category_map(dataset)
-        
-        number_data_df = numerize_tabular_data(data_df, cat_map, categorical_x_col + y_col, numerical_x_col, dataset)
-        dummy_data_df = pd.get_dummies(number_data_df, columns=categorical_x_col)
-        
-        number_train_df, number_test_df, dummy_train_df, dummy_test_df = train_test_split(
-            number_data_df, dummy_data_df, test_size=0.2, random_state=seed, stratify=number_data_df[y_col[0]]
-        )
-        number_valid_df, number_test_df, dummy_valid_df, dummy_test_df = train_test_split(
-            number_test_df, dummy_test_df, test_size=0.5, random_state=seed, stratify=number_test_df[y_col[0]]
-        )
-
-        number_train_df = number_train_df.reset_index(drop=True)
-        number_valid_df = number_valid_df.reset_index(drop=True)
-        number_test_df = number_test_df.reset_index(drop=True)
-
-        dummy_train_df = dummy_train_df.reset_index(drop=True)
-        dummy_valid_df = dummy_valid_df.reset_index(drop=True)
-        dummy_test_df = dummy_test_df.reset_index(drop=True)
-        
-        return number_train_df, dummy_train_df, number_valid_df, dummy_valid_df, number_test_df, dummy_test_df
+def get_dataset_type(dataset='yelp'):
+    if dataset in NLP_DATASET:
+        return 'nlp'
+    elif dataset in TAB_DATASET:
+        return 'tab'
     else:
-        assert(0)
+        raise NotImplementedError(f'Dataset {dataset} is not supported.')
+        
+def get_base_type(base='bert'):
+    if base in NLP_BASE:
+        return 'nlp'
+    elif base in TAB_BASE:
+        return 'tab'
+    else:
+        raise NotImplementedError(f'Base model {base} is not supported.')
 
+def get_class_names(dataset='yelp'):
+    if dataset == 'yelp':
+        class_names = ['Negative', 'Positive']
+    elif dataset == 'clickbait':
+        class_names = ['news', 'clickbait']
+    elif dataset == 'adult':
+        class_names = ['<=50K', '>50K']
+    else:
+        raise NotImplementedError(f'Dataset {dataset} is not supported.')
+        
+    # For extensibility
+    class_names = [str(c) for c in class_names]
+        
+    return class_names
+        
+def get_tabular_column_type(dataset='adult'):
+    if dataset == 'adult':
+        categorical_x_col = ['workclass', 'education', 'marital-status', 'occupation', 'relationship', 'race', 'gender', 'native-country']
+        numerical_x_col = ['age', 'fnlwgt', 'educational-num', 'capital-gain', 'capital-loss', 'hours-per-week']
+        y_col = ['income']
+    else:
+        raise NotImplementedError(f'Base model {base} is not supported.')
+    
+    return categorical_x_col, numerical_x_col, y_col
 
-def numerize_tabular_data(data_df, cat_map, categorical_column, numerical_column, dataset='adult'):
+def get_tabular_category_map(data_df, dataset='adult'):
+    categorical_x_col, numerical_x_col, y_col = get_tabular_column_type(dataset)
+    
+    cat_map = {}
+
+    for cat in categorical_x_col + y_col:
+        cat_map[f'{cat}_idx2key'] = {}
+        cat_map[f'{cat}_key2idx'] = {}
+
+        c = Counter(data_df[cat])
+
+        cat_keys = sorted(c.keys())
+        for i, k in enumerate(cat_keys):
+            cat_map[f'{cat}_idx2key'][i] = k
+            cat_map[f'{cat}_key2idx'][k] = i
+                
+    return cat_map
+
+def numerize_tabular_data(data_df, cat_map, dataset='adult'):
     def convert_key2idx(target, map_dict):
         return map_dict[target]
     
-    for cat in categorical_column:
+    categorical_x_col, numerical_x_col, y_col = get_tabular_column_type(dataset)
+    
+    for cat in categorical_x_col + y_col:
         map_dict = cat_map[f'{cat}_key2idx']
 
         col = data_df[cat]
@@ -118,46 +89,14 @@ def numerize_tabular_data(data_df, cat_map, categorical_column, numerical_column
         data_df[cat] = new_col
         
     data_df = data_df.astype(float)
-    for c in numerical_column:
+    for c in numerical_x_col:
         data_df[c] = data_df[c] / max(data_df[c])
         
     return data_df
         
-def get_tabular_category_map(dataset='adult'):
-    if dataset == 'adult':
-        DATASET='adult'
-        DATA_DIR = './data/adult'
-        
-        data_df = pd.read_csv(f'{DATA_DIR}/adult.csv')
-        categorical_x_col, numerical_x_col, y_col = get_tabular_column_type(dataset)
-        
-    else:
-        assert(0)
-    
-    cat_map = {}
-    if dataset in ['adult']:
-        for cat in categorical_x_col + y_col:
-            cat_map[f'{cat}_idx2key'] = {}
-            cat_map[f'{cat}_key2idx'] = {}
+def get_tabular_numerical_threshold(data_df, dataset='adult', interval=4):
+    categorical_x_col, numerical_x_col, y_col = get_tabular_column_type(dataset)
 
-            c = Counter(data_df[cat])
-            cat_keys = sorted(c.keys())
-            for i, k in enumerate(cat_keys):
-                cat_map[f'{cat}_idx2key'][i] = k
-                cat_map[f'{cat}_key2idx'][k] = i
-                
-    return cat_map
-        
-def get_tabular_numerical_threshold(dataset='adult', interval=4):
-    if dataset == 'adult':
-        DATASET='adult'
-        DATA_DIR = './data/adult/'
-        
-        data_df = pd.read_csv(f'{DATA_DIR}/adult.csv')
-        categorical_x_col, numerical_x_col, y_col = get_tabular_column_type(dataset)
-    else:
-        assert(0)
-    
     numerical_threshold = {}
     if dataset == 'adult':
         for c in numerical_x_col:
@@ -172,19 +111,12 @@ def get_tabular_numerical_threshold(dataset='adult', interval=4):
                 p = i * (100 / interval)
                 numerical_threshold[c].append(np.percentile(target, p))
     else:
-        assert(0)
+        raise NotImplementedError(f'Dataset {dataset} is not supported.')
         
     return numerical_threshold
 
-def get_tabular_numerical_max(dataset='adult'):
-    if dataset == 'adult':
-        DATASET='adult'
-        DATA_DIR = './data/adult'
-        
-        data_df = pd.read_csv(f'{DATA_DIR}/adult.csv')
-        categorical_x_col, numerical_x_col, y_col = get_tabular_column_type(dataset)
-    else:
-        assert(0)
+def get_tabular_numerical_max(data_df, dataset='adult'):
+    categorical_x_col, numerical_x_col, y_col = get_tabular_column_type(dataset)
     
     numerical_max = {}
     if dataset in ['adult']:
@@ -192,71 +124,134 @@ def get_tabular_numerical_max(dataset='adult'):
             numerical_max[c] = data_df[c].describe()['max']
             
     else:
-        assert(0)
+        raise NotImplementedError(f'Dataset {dataset} is not supported.')
         
     return numerical_max
-
-def get_tabular_column_type(dataset='adult'):
-    if dataset == 'adult':
-        categorical_x_col = ['workclass', 'education', 'marital-status', 'occupation', 'relationship', 'race', 'gender', 'native-country']
-        numerical_x_col = ['age', 'fnlwgt', 'educational-num', 'capital-gain', 'capital-loss', 'hours-per-week']
-        y_col = ['income']
-    else:
-        assert(0)
-    
-    return categorical_x_col, numerical_x_col, y_col
         
-def get_class_names(dataset='yelp'):
+def create_dataloader(
+    dataset,
+    batch_size,
+    num_workers,
+    shuffle
+):
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        shuffle=shuffle,
+        persistent_workers=False,
+        pin_memory=False,
+    )
+
+def create_dataset(
+    data_df,
+    dataset='yelp',
+    atom_pool=None,
+    atom_tokenizer=None,
+    tf_tokenizer=None,
+    config=None,
+):
     if dataset == 'yelp':
-        class_names = ['Negative', 'Positive']
+        ds = YelpDataset(
+            data_df,
+            atom_pool=atom_pool,
+            atom_tokenizer=atom_tokenizer,
+            tf_tokenizer=tf_tokenizer,
+            max_len=config.max_position_embeddings,
+        )
+        
     elif dataset == 'clickbait':
-        class_names = ['news', 'clickbait']
+        ds = ClickbaitDataset(
+            data_df,
+            atom_pool=atom_pool,
+            atom_tokenizer=atom_tokenizer,
+            tf_tokenizer=tf_tokenizer,
+            max_len=config.max_position_embeddings,
+        )
+        
     elif dataset == 'adult':
-        class_names = ['<=50K', '>50K']
+        ds = AdultDataset(
+            data_df,
+            atom_pool=atom_pool
+        )
     else:
-        assert(0)
+        raise NotImplementedError(f'Dataset {dataset} is not supported.')
+    
+    return ds
         
-    return class_names
-
-class AdultDataset(Dataset):
-    def __init__(self, number_df, dummy_df, atom_pool, args):
-        self.x_number = number_df.drop(columns=['income'])
-        self.x_dummy = dummy_df.drop(columns=['income'])
-        self.y = number_df['income']
+class YelpDataset(Dataset):
+    def __init__(
+        self,
+        df,
+        atom_pool=None,
+        atom_tokenizer=None,
+        tf_tokenizer=None,
+        max_len=512,
+    ):
+        self.text = df['text']
+        self.y = df['label'].astype(dtype='int64')
         self.ap = atom_pool
-        self.base = args.base_model
-        
-        print(f"Data Num: {len(self.y)}")
+        self.atom_tokenizer = atom_tokenizer
+        self.tf_tokenizer = tf_tokenizer
+        self.max_len = max_len
         
     def __len__(self):
         return len(self.y)
     
     def __getitem__(self, i):
-        x_number = self.x_number.loc[i]
-        x_dummy = self.x_dummy.loc[i]
+        encoding = self.tf_tokenizer.encode_plus(
+            text=self.text[i],
+            add_special_tokens=True,
+            max_length=self.max_len,
+            return_token_type_ids=False,
+            padding='max_length',
+            return_attention_mask=True,
+            return_tensors='pt',
+            truncation=True,
+        )
+
+        input_ids = encoding['input_ids']
+        attention_mask = encoding['attention_mask']
+
+        input_ids = input_ids.squeeze(dim=0).long()
+        attention_mask = attention_mask.squeeze(dim=0).long()
         
-        x = torch.tensor(x_dummy).float()
         if self.ap != None:
-            x_ = self.ap.check_atoms(x_number)
+            text_ = np.zeros(self.atom_tokenizer.vocab_size)
+            x_count = Counter(self.atom_tokenizer.tokenize(self.text[i]))
+
+            for k, v in dict(x_count).items():
+                text_[k] = v
+
+            # x_ indicates if the satisfaction of atoms for current sample
+            x_ = self.ap.check_atoms(text_)
+                
             x_ = torch.Tensor(x_).long()
         else:
             x_ = torch.Tensor([0]).long()
+            
         
         y = self.y[i]
-        y = torch.Tensor([y]).long()
+#         y = torch.Tensor([y]).long()
         
-        return x, x_, y
-
+        return (input_ids, attention_mask, x_), y
+        
 class ClickbaitDataset(Dataset):
-    def __init__(self, df, atom_pool, tf_tokenizer, atom_tokenizer, args, max_len=512):
+    def __init__(
+        self,
+        df,
+        atom_pool,
+        atom_tokenizer,
+        tf_tokenizer,
+        max_len=512
+    ):
         self.title = df['title']
         self.text = df['text']
-        self.y = df['label']
+        self.y = df['label'].astype(dtype='int64')
         self.ap = atom_pool
         self.tf_tokenizer = tf_tokenizer
         self.atom_tokenizer = atom_tokenizer        
         self.max_len = max_len
-        self.base = args.base_model
         
         print(f"Data Num: {len(self.y)}")
         
@@ -279,8 +274,8 @@ class ClickbaitDataset(Dataset):
         input_ids = encoding['input_ids']
         attention_mask = encoding['attention_mask']
 
-        input_ids = torch.tensor(input_ids).long()
-        attention_mask = torch.tensor(attention_mask).long()
+        input_ids = torch.tensor(input_ids).squeeze(dim=0).long()
+        attention_mask = torch.tensor(attention_mask).squeeze(dim=0).long()
         
         if self.ap != None:
             title_ = np.zeros(self.atom_tokenizer.vocab_size)
@@ -306,19 +301,22 @@ class ClickbaitDataset(Dataset):
             
         
         y = self.y[i]
-        y = torch.Tensor([y]).long()
+#         y = torch.Tensor([y]).long()
         
-        return input_ids, attention_mask, x_, y
-
-class YelpDataset(Dataset):
-    def __init__(self, df, atom_pool, tf_tokenizer, atom_tokenizer, args, max_len=512):
-        self.text = df['text']
-        self.y = df['label']
+        return (input_ids, attention_mask, x_), y
+        
+class AdultDataset(Dataset):
+#     def __init__(self, number_df, dummy_df, atom_pool, args):
+    def __init__(
+        self,
+        df,
+        atom_pool,
+    ):
+#         self.x_number = number_df.drop(columns=['income'])
+#         self.x_dummy = dummy_df.drop(columns=['income'])
+        self.x = df.drop(columns=['income'])
+        self.y = df['income'].astype(dtype='int64')
         self.ap = atom_pool
-        self.tf_tokenizer = tf_tokenizer
-        self.atom_tokenizer = atom_tokenizer        
-        self.max_len = max_len
-        self.base = args.base_model
         
         print(f"Data Num: {len(self.y)}")
         
@@ -326,42 +324,105 @@ class YelpDataset(Dataset):
         return len(self.y)
     
     def __getitem__(self, i):
-        encoding = self.tf_tokenizer.encode_plus(
-            text=self.text[i],
-            add_special_tokens=True,
-            max_length=self.max_len,
-            return_token_type_ids=False,
-            padding='max_length',
-            return_attention_mask=True,
-            return_tensors='np',
-            truncation=True,
-        )
+#         x_number = self.x_number.loc[i]
+#         x_dummy = self.x_dummy.loc[i]
+        x_dummy = self.x.loc[i]
+        x = torch.tensor(x_dummy).float()
 
-        input_ids = encoding['input_ids']
-        attention_mask = encoding['attention_mask']
-
-        input_ids = torch.tensor(input_ids).long()
-        attention_mask = torch.tensor(attention_mask).long()
-        
         if self.ap != None:
-            text_ = np.zeros(self.atom_tokenizer.vocab_size)
-            x_count = Counter(self.atom_tokenizer.tokenize(self.text[i]))
-
-            for k, v in dict(x_count).items():
-                text_[k] = v
-
-            # x_ indicates if the satisfaction of atoms for current sample
-            x_ = self.ap.check_atoms(text_)
-                
+            x_ = self.ap.check_atoms(x_dummy)
             x_ = torch.Tensor(x_).long()
         else:
             x_ = torch.Tensor([0]).long()
-            
         
         y = self.y[i]
-        y = torch.Tensor([y]).long()
+#         y = torch.Tensor([y]).long()
         
-        return input_ids, attention_mask, x_, y
+        return (x, x_), y
+        
+def load_data(
+    dataset='yelp',
+    data_dir='./data/',
+    seed=7,
+):
+    if dataset=='yelp':
+        # Negative = 0, Positive = 1
+        data_path = f'{data_dir}/yelp_review_polarity_csv'
+
+        train_df = pd.read_csv(f'{data_path}/train.csv', header=None)
+        train_df = train_df.rename(columns={0: 'label', 1: 'text'})
+        train_df['label'] = train_df['label'] - 1
+        _, train_df = train_test_split(train_df, test_size=0.1, random_state=seed, stratify=train_df['label'])
+
+        test_df = pd.read_csv(f'{data_path}/test.csv', header=None)
+        test_df = test_df.rename(columns={0: 'label', 1: 'text'})
+        test_df['label'] = test_df['label'] - 1
+
+        test_df = test_df.reset_index(drop=True)
+        test_df, valid_df = train_test_split(test_df, test_size=0.5, random_state=seed, stratify=test_df['label'])
+    
+    elif dataset=='clickbait':
+        # news = 0, clickbait = 1
+        data_path = f'{data_dir}/clickbait_news_detection'
+
+        train_df = pd.read_csv(f'{data_path}/train.csv')
+        train_df = train_df.loc[train_df['label'].isin(['news', 'clickbait']), ['title', 'text', 'label']]
+        train_df = train_df.dropna()
+        train_df.at[train_df['label']=='news', 'label'] = 0
+        train_df.at[train_df['label']=='clickbait', 'label'] = 1
+        
+        valid_df = pd.read_csv(f'{data_path}/valid.csv')
+        valid_df = valid_df.loc[valid_df['label'].isin(['news', 'clickbait']), ['title', 'text', 'label']]
+        valid_df = valid_df.dropna()
+        valid_df.at[valid_df['label']=='news', 'label'] = 0
+        valid_df.at[valid_df['label']=='clickbait', 'label'] = 1
+
+        test_df, valid_df = train_test_split(valid_df, test_size=0.5, random_state=seed, stratify=valid_df['label'])
+    
+    elif dataset=='adult':
+        # <=50K = 0, >50K = 1
+        data_path = f'{data_dir}/adult'
+        
+        data_df = pd.read_csv(f'{data_path}/adult.csv')
+        categorical_x_col, numerical_x_col, y_col = get_tabular_column_type(dataset)
+        assert(set(data_df.columns) == set(categorical_x_col + numerical_x_col + y_col))
+        
+        cat_map = get_tabular_category_map(data_df, dataset)
+        
+        number_data_df = numerize_tabular_data(data_df, cat_map, dataset)
+        dummy_data_df = pd.get_dummies(number_data_df, columns=categorical_x_col)
+#         print(dummy_data_df.columns)
+#         assert(0)
+        
+#         number_train_df, number_test_df, dummy_train_df, dummy_test_df = train_test_split(
+#             number_data_df, dummy_data_df, test_size=0.2, random_state=seed, stratify=number_data_df[y_col[0]]
+#         )
+#         number_valid_df, number_test_df, dummy_valid_df, dummy_test_df = train_test_split(
+#             number_test_df, dummy_test_df, test_size=0.5, random_state=seed, stratify=number_test_df[y_col[0]]
+#         )
+
+#         number_train_df = number_train_df.reset_index(drop=True)
+#         number_valid_df = number_valid_df.reset_index(drop=True)
+#         number_test_df = number_test_df.reset_index(drop=True)
+
+#         dummy_train_df = dummy_train_df.reset_index(drop=True)
+#         dummy_valid_df = dummy_valid_df.reset_index(drop=True)
+#         dummy_test_df = dummy_test_df.reset_index(drop=True)
+        
+#         return (number_train_df, dummy_train_df, number_valid_df, dummy_valid_df, number_test_df, dummy_test_df), cat_map
+        train_df, test_df = train_test_split(
+            dummy_data_df, test_size=0.2, random_state=seed, stratify=number_data_df[y_col[0]]
+        )
+        valid_df, test_df = train_test_split(
+            test_df, test_size=0.5, random_state=seed, stratify=test_df[y_col[0]]
+        )
+
+    else:
+        assert(0)
+        
+    train_df, valid_df, test_df = [df.reset_index(drop=True) for df in [train_df, valid_df, test_df]]
+    
+    return train_df, valid_df, test_df
     
 class AdultPretrainDataset(Dataset):
     def __init__(

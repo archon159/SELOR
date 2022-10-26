@@ -2,23 +2,48 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+def get_tf_model(
+    base='bert'
+):
+    if base == 'bert':
+        from transformers import BertModel, BertTokenizer, BertConfig
+        
+        PRE_TRAINED_MODEL_NAME = 'bert-base-uncased'
+        tf_tokenizer = BertTokenizer.from_pretrained(PRE_TRAINED_MODEL_NAME)
+        tf_model = BertModel.from_pretrained(PRE_TRAINED_MODEL_NAME, return_dict=True)
+        config = BertConfig.from_pretrained(PRE_TRAINED_MODEL_NAME)
+        
+    elif base == 'roberta':
+        from transformers import RobertaModel, RobertaTokenizer, RobertaConfig
+        
+        PRE_TRAINED_MODEL_NAME = 'roberta-base'
+        tf_tokenizer = RobertaTokenizer.from_pretrained(PRE_TRAINED_MODEL_NAME)
+        tf_model = RobertaModel.from_pretrained(PRE_TRAINED_MODEL_NAME, return_dict=True)
+        config = RobertaConfig.from_pretrained(PRE_TRAINED_MODEL_NAME)
+        
+    else:
+        tf_tokenizer = None
+        tf_model = None
+        config = None
+        
+    return tf_tokenizer, tf_model, config
+
 class BaseModel(nn.Module):
     def __init__(
         self,
+        dataset='yelp',
+        base='bert',
         input_dim=512,
         hidden_dim=int,
-        vocab_size=int,
+        tf_model=None,
         num_classes=2,
         dropout=0,
-        padding_idx=0,
-        tf_model=None,
-        args=None,
     ):
         super(BaseModel, self).__init__()
         self.model_name = 'base'
-        self.base = args.base_model
-        self.dataset = args.dataset
-        self.hidden_dim = hidden_dim
+        
+        self.dataset = dataset
+        self.base = base
         
         if self.base == 'dnn':
             self.linear_base = nn.Sequential(
@@ -35,10 +60,10 @@ class BaseModel(nn.Module):
         
     def forward(self, inputs):
         if self.base == 'dnn':
-            x = inputs
+            x, _ = inputs
             h = self.linear_base(x)
         else:
-            input_ids, attention_mask = inputs
+            input_ids, attention_mask, _ = inputs
             batch_size, max_len = input_ids.shape
             out = self.transformer_model(
                 input_ids=input_ids,
@@ -52,7 +77,7 @@ class BaseModel(nn.Module):
         out = nn.functional.softmax(out, dim=1)
         out = torch.log(out)
         
-        return out, h
+        return out, _, _
     
 class ConsequentEstimator(nn.Module):
     def __init__(

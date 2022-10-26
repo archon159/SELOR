@@ -8,9 +8,35 @@ import time
 from collections import Counter
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ExponentialLR
-from sklearn.metrics import classification_report, roc_auc_score
-from dataset import get_class_names
+from sklearn.metrics import classification_report, roc_auc_score, precision_recall_curve, auc
 
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+class Log(object):
+    def __init__(self, log_path):
+        self.flog = open(log_path, 'w')
+        
+    def write(self, s):
+        print(s, file=self.flog, flush=True)
+    
+    def close(self):
+        self.flog.close()
+        
 # The function for training cp predictor.
 def pretrain(
     ce_model,
@@ -164,58 +190,22 @@ def train_epoch(
     model,
     loss_func,
     train_dataloader,
-    args,
+    gpu,
 ):
-    gpu = torch.device(f'cuda:{args.gpu}')
     
-    train_loss = []
+    train_loss = AverageMeter()
     pbar = tqdm(train_dataloader)
 
     model.train()
     for d in train_dataloader:
-        if args.dataset in ['yelp', 'clickbait']:
-            input_ids, attention_mask, x_, y = d
-            input_ids = input_ids.to(gpu).squeeze(dim=1)
-            attention_mask = attention_mask.to(gpu).squeeze(dim=1)
-            y = y.to(gpu).squeeze(dim=1)
+        inputs, y = d
+        inputs = [i.to(gpu) for i in inputs]
+        y = y.to(gpu)
+        batch_size = len(y)
         
-            # Run the model
-            if model.model_name == 'base':
-                inputs = input_ids, attention_mask
-                outputs, _ = model(
-                    inputs
-                )
-            elif model.model_name == 'selor':
-                x_ = x_.to(gpu)
-                inputs = input_ids, attention_mask, x_
-                # Run the model
-                outputs, _, _ = model(
-                    inputs
-                )
-            else:
-                assert(0)
-                
-        elif args.dataset in ['adult']:
-            x, x_, y = d
-            x = x.to(gpu)
-            y = y.to(gpu).squeeze(dim=1)
-            
-            if model.model_name == 'base':
-                inputs = x
-                outputs, _ = model(
-                    inputs
-                )
-            elif model.model_name == 'selor':
-                x_ = x_.to(gpu)
-                inputs = x, x_
-                outputs, _, _ = model(
-                    inputs
-                )
-                
-            else:
-                assert(0)
-        else:
-            assert(0)
+        outputs, _, _ = model(
+            inputs
+        )
 
         loss = loss_func(outputs, y)
 
@@ -223,248 +213,176 @@ def train_epoch(
         loss.backward()
         optimizer.step()
         
-        train_loss.append(loss.item())
+        train_loss.update(loss.item(), n=batch_size)
 
         pbar.update(1)
-        average_train_loss = sum(train_loss)/len(train_loss)
-        pbar.set_description(f'Train Loss: {average_train_loss:.3f}')
+        pbar.set_description(f'Train Loss: {train_loss.avg:.3f}')
         # break
         
     pbar.close()
 
-    avg_train_loss = sum(train_loss) / len(train_loss)
-
-    return model, average_train_loss
+    return model, train_loss
 
 def eval_epoch(
     model,
     loss_func,
     valid_dataloader,
-    args,
+    class_names,
+    gpu,
 ):
-    gpu = torch.device(f'cuda:{args.gpu}')
-    
     pbar = tqdm(valid_dataloader)
     model.eval()
     with torch.no_grad():
-        valid_loss = []
+        valid_loss = AverageMeter()
         predictions = []
+        target_probs = []
         answers = []
         for d in valid_dataloader:
-            if args.dataset in ['yelp', 'clickbait']:
-                input_ids, attention_mask, x_, y = d
-                input_ids = input_ids.to(gpu).squeeze(dim=1)
-                attention_mask = attention_mask.to(gpu).squeeze(dim=1)
-                y = y.to(gpu).squeeze(dim=1)
+            inputs, y = d
+            inputs = [i.to(gpu) for i in inputs]
+            y = y.to(gpu)
+            batch_size = len(y)
 
-                # Run the model
-                if model.model_name == 'base':
-                    inputs = input_ids, attention_mask
-                    outputs, _ = model(
-                        inputs
-                    )
-                elif model.model_name == 'selor':
-                    x_ = x_.to(gpu)
-                    inputs = input_ids, attention_mask, x_
-                    # Run the model
-                    outputs, _, _ = model(
-                        inputs
-                    )
-                else:
-                    assert(0)
-
-            elif args.dataset in ['adult']:
-                x, x_, y = d
-                x = x.to(gpu)
-                y = y.to(gpu).squeeze(dim=1)
-
-                if model.model_name == 'base':
-                    inputs = x
-                    outputs, _ = model(
-                        inputs
-                    )
-                elif model.model_name == 'selor':
-                    x_ = x_.to(gpu)
-                    inputs = x, x_
-                    outputs, _, _ = model(
-                        inputs
-                    )
-                    
-                else:
-                    assert(0)
-            else:
-                assert(0)
+            outputs, _, _ = model(
+                inputs
+            )
                 
             loss = loss_func(outputs, y) 
-            valid_loss.append(loss.item())
+            valid_loss.update(loss.item(), n=batch_size)
             
             _, preds = torch.max(outputs, dim=1)
             predictions.extend(preds)
+            
+            target_prob = torch.exp(outputs)[:, 1]
+            target_probs.extend(target_prob)
+            
             answers.extend(y)
             
             pbar.update(1)
-            average_valid_loss = sum(valid_loss)/len(valid_loss)
-            pbar.set_description(f'Valid Loss: {average_valid_loss:.3f}')
+            pbar.set_description(f'Valid Loss: {valid_loss.avg:.3f}')
             # break
-            
-            
+
         pbar.close()
         predictions = torch.stack(predictions).cpu().tolist()
+        target_probs = torch.stack(target_probs).cpu().tolist()
         answers = torch.stack(answers).cpu().tolist()
-        
-        avg_valid_loss = sum(valid_loss) / len(valid_loss)
-        
-        class_names = get_class_names(args.dataset)
+
         classification_dict = classification_report(answers, predictions, target_names=class_names, output_dict=True)
+        roc_auc = roc_auc_score(answers, target_probs)
+        precision, recall, thresholds = precision_recall_curve(answers, predictions, pos_label=1)
+        pr_auc = auc(recall, precision)
         
-        return classification_dict, average_valid_loss
+        return classification_dict, roc_auc, pr_auc, valid_loss
     
 def train(
     model,
     loss_func,
     train_dataloader,
     valid_dataloader,
-    args,
+    learning_rate,
+    weight_decay,
+    gamma,
+    epochs,
+    gpu,
+    class_names,
     dir_path,
-    flog,
 ):
-    DIR_PATH = dir_path
     
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     optimizer.zero_grad()
 
-    USE_SCHEDULER = True
-    VERBOSE = True
+    scheduler = ExponentialLR(optimizer, gamma=0.95)
 
-    if USE_SCHEDULER:
-        scheduler = ExponentialLR(optimizer, gamma=0.95)
-
-    print('Start Training', file=flog, flush=True)
-    
     min_valid_loss = 100.0
+    best_model_path = f'{dir_path}/model_best.pt'
     
-    BEST_MODEL_PATH = f'{DIR_PATH}/model_best.pt'
+    train_times = AverageMeter()
+    valid_times = AverageMeter()
     
-    train_time_list = []
-    valid_time_list = []
-    for epoch in range(args.epochs):
-        print(f'Epoch {epoch}', file=flog, flush=True)
+    log_path = f'{dir_path}/log'
+    train_log = Log(log_path)
+    
+    train_log.write('Start Training')
+    
+    for epoch in range(epochs):
+        train_log.write(f'Epoch {epoch}')
         
         train_start = time.time()
-        model, train_loss = train_epoch(optimizer, model, loss_func, train_dataloader, args)
+        model, train_loss = train_epoch(optimizer, model, loss_func, train_dataloader, gpu)
         train_end = time.time()
         train_time = train_end - train_start
-        print(f'Training Time: {train_time:.3f} s', file=flog, flush=True)
-        train_time_list.append(train_time)
+        train_log.write(f'Training Time: {train_time:.3f} s')
+        train_times.update(train_time)
         
-        if USE_SCHEDULER:
-            scheduler.step()
+        scheduler.step()
             
         valid_start = time.time()
-        classification_dict, valid_loss = eval_epoch(model, loss_func, valid_dataloader, args)
+        classification_dict, roc_auc, pr_auc, valid_loss = eval_epoch(model, loss_func, valid_dataloader, class_names, gpu)
         valid_end = time.time()
         valid_time = valid_end - valid_start
-        print(f'Validation Time: {train_time:.3f} s', file=flog, flush=True)
-        valid_time_list.append(valid_time)
+        train_log.write(f'Validation Time: {train_time:.3f} s')
+        valid_times.update(valid_time)
 
-        if VERBOSE:
-            print(f'Train Loss: {train_loss:.3f}', file=flog, flush=True)
-            print(f'Valid Loss: {valid_loss:.3f}', file=flog, flush=True)
-            print('Valid Macro-F1:', classification_dict['macro avg']['f1-score'], file=flog, flush=True)
-            print('\n', file=flog, flush=True)
+        train_log.write(f'Train Loss: {train_loss.avg:.3f}')
+        train_log.write(f'Valid Loss: {valid_loss.avg:.3f}')
+        train_log.write(f'Valid Macro-F1: {classification_dict["macro avg"]["f1-score"]:.4f}')
+        train_log.write(f'Valid ROC-AUC: {roc_auc:.4f}')
+        train_log.write(f'Valid PR-AUC: {pr_auc:.4f}')
+        train_log.write(f'\n')
 
-        MODEL_PATH = f'{DIR_PATH}/model_epoch_{epoch}.pt'
-        RESULT_PATH = f'{DIR_PATH}/model_validation_result_{epoch}.json'
-        torch.save(model.state_dict(), MODEL_PATH)
+        model_path = f'{dir_path}/model_epoch_{epoch}.pt'
+        torch.save(model.state_dict(), model_path)
         
-        if valid_loss < min_valid_loss:
-            min_valid_loss = valid_loss
-            torch.save(model.state_dict(), BEST_MODEL_PATH)
-        
-        valid_loss_dict = {}
-        valid_loss_dict['epoch'] = epoch
-        valid_loss_dict['valid_loss'] = valid_loss
-        with open(RESULT_PATH, "w") as f:
-            json.dump(valid_loss_dict, f)
-            
-    avg_train_time = sum(train_time_list) / len(train_time_list)
-    avg_valid_time = sum(valid_time_list) / len(valid_time_list)
-    print('\n')
-    print(f'Average Training Time: {avg_train_time:.3f} s', file=flog, flush=True)
-    print(f'Average Validation Time: {avg_valid_time:.3f} s', file=flog, flush=True)
+        if valid_loss.avg < min_valid_loss:
+            min_valid_loss = valid_loss.avg
+            torch.save(model.state_dict(), best_model_path)
+
+    train_log.write(f'Average Train Time: {train_times.avg:.3f} s')
+    train_log.write(f'Average Valid Time: {valid_times.avg:.3f} s')
+    train_log.close()
+    
+    return model
     
 def eval_model(
     model,
     loss_func,
     test_dataloader,
-    args,
-    feval,
-    true_matrix=None,
-    n_data=0,
+    true_matrix,
+    gpu,
+    class_names,
+    dir_path,
 ):
-    gpu = torch.device(f'cuda:{args.gpu}')
+    eval_path = f'{dir_path}/model_eval'
+    eval_log = Log(eval_path)
     
     pbar = tqdm(test_dataloader)
     model.eval()
     with torch.no_grad():
-        test_loss = []
+        test_loss = AverageMeter()
         predictions = []
         target_probs = []
         answers = []
         
         if model.model_name == 'selor':
-            confidences = []
-            consistencies = []
-            duplicates = []
-            coverages = []
-            uniques = []
+            confidences = AverageMeter()
+            consistencies = AverageMeter()
+            duplicates = AverageMeter()
+            coverages = AverageMeter()
+            uniques = AverageMeter()
             lengths = []
             
         eval_start = time.time()
         for d in test_dataloader:
-            if args.dataset in ['yelp', 'clickbait']:
-                input_ids, attention_mask, x_, y = d
-                input_ids = input_ids.to(gpu).squeeze(dim=1)
-                attention_mask = attention_mask.to(gpu).squeeze(dim=1)
-                y = y.to(gpu).squeeze(dim=1)
+            inputs, y = d
+            inputs = [i.to(gpu) for i in inputs]
+            y = y.to(gpu)
+            batch_size = len(y)
 
-                # Run the model
-                if model.model_name == 'base':
-                    inputs = input_ids, attention_mask
-                    outputs, _ = model(
-                        inputs
-                    )
-                elif model.model_name == 'selor':
-                    x_ = x_.to(gpu)
-                    inputs = input_ids, attention_mask, x_
-                    # Run the model
-                    outputs, atom_prob_list, cp_list = model(
-                        inputs
-                    )
-                else:
-                    assert(0)
-
-            elif args.dataset in ['adult']:
-                x, x_, y = d
-                x = x.to(gpu)
-                y = y.to(gpu).squeeze(dim=1)
-
-                if model.model_name == 'base':
-                    inputs = x
-                    outputs, _ = model(
-                        inputs
-                    )
-                elif model.model_name == 'selor':
-                    x_ = x_.to(gpu)
-                    inputs = x, x_
-                    outputs, atom_prob_list, cp_list = model(
-                        inputs
-                    )
-                    
-                else:
-                    assert(0)
-            else:
-                assert(0)
+            # For base, we do not use atom_prob_list and cp_list
+            outputs, atom_prob_list, cp_list = model(
+                inputs
+            )
+            
             
             if model.model_name == 'selor':
                 # Get the list of chosen atoms
@@ -481,37 +399,33 @@ def eval_model(
                 cp_mean_list = torch.mean(cp_list, dim=1)
                 max_cp, _ = torch.max(cp_mean_list, dim=-1)
                 confidence = torch.abs(max_cp - 0.5) * 2
-                confidences.extend(confidence)
-
-                batch_size, num_head, n_class = cp_list.shape
 
                 # Calculate Consistency
+                _, num_head, n_class = cp_list.shape
                 _, decision = torch.max(cp_list, dim=-1)
                 cs = (decision == decision[:, 0].unsqueeze(dim=-1).repeat(1, num_head)).int()
                 consistency = (torch.sum(cs, dim=-1) == num_head).float()
-                consistencies.extend(consistency)
 
                 ind_list = torch.stack(ind_list, dim=1)
-                batch_size, num_head, rule_length = ind_list.shape
+                _, num_head, rule_length = ind_list.shape
                 ind_list = ind_list.view(batch_size, num_head * rule_length)
 
                 # Calculate the number of unique atoms
                 unique = []
                 for i in ind_list:
                     unique.append(len(set(i.tolist())))
-                uniques.extend(torch.tensor(unique).float())
-
+                    
                 # Calculate the length of rule
                 length = torch.sum((ind_list != 0), dim=1)
-                lengths.extend(length.float())
 
                 # Calculate the number of duplicated atoms
                 token, _ = torch.mode(ind_list, dim=1)
                 check = ind_list==token.unsqueeze(dim=-1)
                 duplicate = torch.sum(check, dim=-1)
-                duplicates.extend(duplicate.float())
-
+                
                 # Calculate the coverage of the rule
+                print(true_matrix.shape)
+                assert(0)
                 mat_rule_prob = torch.stack(atom_prob_list, dim=1)
                 cover_rule_prob = torch.sum(mat_rule_prob, dim=2)
                 cover_rule_prob = torch.matmul(cover_rule_prob, true_matrix)
@@ -519,10 +433,16 @@ def eval_model(
                 mat_satis = torch.sum(mat_satis.float(), dim=-1)
                 mat_coverage = mat_satis / n_data
                 coverage = torch.mean(mat_coverage, dim=-1)
-                coverages.extend(coverage.float())
+                
+                confidences.update(confidence.mean().item(), batch_size)
+                consistencies.update(consistency.mean().item(), batch_size)
+                uniques.update(torch.tensor(unique).float().mean().item())
+                lengths.extend(length.float())
+                duplicates.update(duplicate.float().mean().item())
+                coverages.update(coverage.float().mean().item())
             
             loss = loss_func(outputs,y)
-            test_loss.append(loss.item())
+            test_loss.update(loss.item(), batch_size)
             
             _, preds = torch.max(outputs, dim=1)
             target_prob = torch.exp(outputs)[:, 1]
@@ -532,51 +452,47 @@ def eval_model(
             answers.extend(y)
             
             pbar.update(1)
-            average_test_loss = sum(test_loss)/len(test_loss)
-            pbar.set_description(f'Test Loss: {average_test_loss:.3f}')
+            pbar.set_description(f'Test Loss: {test_loss.avg:.3f}')
             # break
             
         pbar.close()
         eval_end = time.time()
         eval_time = eval_end - eval_start
-        
-        avg_test_loss = sum(test_loss) / len(test_loss)
-        
+                
         predictions = torch.stack(predictions).cpu().tolist()
         target_probs = torch.stack(target_probs).cpu().tolist()
         answers = torch.stack(answers).cpu().tolist()
         
         if model.model_name == 'selor':
-            avg_confidence = torch.mean(torch.stack(confidences)).item()
-            avg_consistency = torch.mean(torch.stack(consistencies)).item()
-            avg_duplicate = torch.mean(torch.stack(duplicates)).item()
-            avg_unique = torch.mean(torch.stack(uniques)).item()
-            avg_coverage = torch.mean(torch.stack(coverages)).item()
             count_length = Counter(torch.stack(lengths).int().tolist())
             dist_length = {}
             for k, v in count_length.items():
                 dist_length[k] = v / len(answers)
 
-        print(f'Avg Test Loss: {avg_test_loss:.4f}', file=feval, flush=True)
-        print(f'Evaluation Time: {eval_time:.3f} s', file=feval, flush=True)
+        eval_log.write(f'Avg Test Loss: {test_loss.avg:.4f}')
+        eval_log.write(f'Evaluation Time: {eval_time:.3f} s')
         
         if model.model_name == 'selor':
-            print(f'Confidence: {avg_confidence:.4f}', file=feval, flush=True)
-            print(f'Consistency: {avg_consistency:.4f}', file=feval, flush=True)
-            print(f'Duplicate: {avg_duplicate:.4f}', file=feval, flush=True)
-            print(f'Unique: {avg_unique:.4f}', file=feval, flush=True)
-            print(f'Coverage: {avg_coverage:.6f}', file=feval, flush=True)
-            print(f'Length ', file=feval, flush=True)
+            eval_log.write(f'Confidence: {confidences.avg:.4f}')
+            eval_log.write(f'Consistency: {consistencies.avg:.4f}')
+            eval_log.write(f'Duplicate: {duplicates.avg:.4f}')
+            eval_log.write(f'Unique: {uniques.avg:.4f}')
+            eval_log.write(f'Coverage: {coverages.avg:.4f}')
+            eval_log.write(f'Length')
             for i in range(rule_length + 1):
                 if i in dist_length:
-                    print(f'{i}: {dist_length[i]:.4f}', file=feval, flush=True)
+                    eval_log.write(f'{i}: {dist_length[i]:.4f}')
         
-        print('Prediction Performance:', file=feval, flush=True)
-        class_names = [str(c) for c in get_class_names(args.dataset)]
-        print(classification_report(answers, predictions, target_names=class_names, digits=4), file=feval, flush=True)
-        auc = roc_auc_score(answers, target_probs)
-        print(f'AUC: {auc:.4f}', file=feval, flush=True)
-        print('\n', file=feval, flush=True)
+        roc_auc = roc_auc_score(answers, target_probs)
+        precision, recall, thresholds = precision_recall_curve(answers, predictions, pos_label=1)
+        pr_auc = auc(recall, precision)
+        
+        eval_log.write('Prediction Performance:')
+        eval_log.write(classification_report(answers, predictions, target_names=class_names, digits=4))
+        eval_log.write(f'ROC-AUC: {roc_auc:.4f}')
+        eval_log.write(f'PR-AUC: {pr_auc:.4f}')
+        
+    eval_log.close()
         
 def get_train_embedding(
     model,

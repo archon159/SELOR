@@ -1,195 +1,127 @@
-VERSION_NAME = 'base'
+RUN = 'base'
 
 import os
-import json
 from datetime import datetime
-from sklearn.metrics import classification_report
 import torch
 import torch.nn as nn
 
 # Import from custom files
-from model import BaseModel
-from dataset import get_class_names, create_dataloader, get_dataset
-from utils import parse_arguments, reset_seed
-from train_eval import train, eval_model
+from selor_utils import dataset as ds
+from selor_utils import net
+from selor_utils import train_eval as te
+from selor_utils import utils
         
 if __name__ == "__main__":
-    args = parse_arguments()
+    args = utils.parse_arguments()
+    
+    dtype = ds.get_dataset_type(args.dataset)
+    btype = ds.get_base_type(args.base)
+
     seed = args.seed
     gpu = torch.device(f'cuda:{args.gpu}')
-    reset_seed(seed)
+    utils.reset_seed(seed)
     
-    if args.base_model == 'bert':
-        from transformers import BertModel, BertTokenizer, BertConfig
+    tf_tokenizer, tf_model, config = net.get_tf_model(args.base)
 
-        MAX_LEN = 512
-        PRE_TRAINED_MODEL_NAME = 'bert-base-uncased'
-        tf_tokenizer = BertTokenizer.from_pretrained(PRE_TRAINED_MODEL_NAME)
-        tf_model = BertModel.from_pretrained(PRE_TRAINED_MODEL_NAME, return_dict=True)
-        config = BertConfig.from_pretrained(PRE_TRAINED_MODEL_NAME)
-        vocab_size = tf_tokenizer.vocab_size
-        pad_token_id = tf_tokenizer.pad_token_id
-
-    elif args.base_model == 'roberta':
-        from transformers import RobertaModel, RobertaTokenizer, RobertaConfig
-
-        MAX_LEN = 512
-        PRE_TRAINED_MODEL_NAME = 'roberta-base'
-        tf_tokenizer = RobertaTokenizer.from_pretrained(PRE_TRAINED_MODEL_NAME)
-        tf_model = RobertaModel.from_pretrained(PRE_TRAINED_MODEL_NAME, return_dict=True)
-        config = RobertaConfig.from_pretrained(PRE_TRAINED_MODEL_NAME)
-        vocab_size = tf_tokenizer.vocab_size
-        pad_token_id = tf_tokenizer.pad_token_id
-        
-    else:
-        tf_tokenizer = None
-        tf_model = None
-        vocab_size = 0
-        pad_token_id = 0
-
-    
-    datasets = get_dataset(dataset=args.dataset)
-        
     # Create datasets
-    if args.dataset == 'yelp':
-        train_df, valid_df, test_df = datasets
-        
-        from dataset import YelpDataset
-        train_dataset = YelpDataset(
-            train_df,
+    train_df, valid_df, test_df = ds.load_data(dataset=args.dataset)
+    train_dataset, valid_dataset, test_dataset = [
+        ds.create_dataset(
+            df,
+            dataset=args.dataset,
             atom_pool=None,
-            tf_tokenizer=tf_tokenizer,
-            atom_tokenizer=None, args=args
-        )
-        
-        valid_dataset = YelpDataset(
-            valid_df,
-            atom_pool=None,
-            tf_tokenizer=tf_tokenizer,
-            atom_tokenizer=None, args=args
-        )
-        test_dataset = YelpDataset(
-            test_df,
-            atom_pool=None,
-            tf_tokenizer=tf_tokenizer,
             atom_tokenizer=None,
-            args=args
-        )
-        
-        input_dim = config.hidden_size
-        hidden_dim = config.hidden_size
-        
-    elif args.dataset == 'clickbait':
-        train_df, valid_df, test_df = datasets
-        
-        from dataset import ClickbaitDataset
-        train_dataset = ClickbaitDataset(
-            train_df,
-            atom_pool=None,
             tf_tokenizer=tf_tokenizer,
-            atom_tokenizer=None,
-            args=args
-        )
+            config=config
+        ) for df in [train_df, valid_df, test_df]]
         
-        valid_dataset = ClickbaitDataset(
-            valid_df,
-            atom_pool=None,
-            tf_tokenizer=tf_tokenizer,
-            atom_tokenizer=None,
-            args=args
-        )
+    train_dataloader = ds.create_dataloader(
+        train_dataset,
+        args.batch_size,
+        args.num_workers,
+        shuffle=True
+    )
         
-        test_dataset = ClickbaitDataset(
-            test_df,
-            atom_pool=None,
-            tf_tokenizer=tf_tokenizer,
-            atom_tokenizer=None,
-            args=args
-        )
+    valid_dataloader, test_dataloader = [
+        ds.create_dataloader(
+            dtset,
+            args.batch_size,
+            args.num_workers,
+            shuffle=False
+        ) for dtset in [valid_dataset, test_dataset]]
         
+    if args.dataset in ds.NLP_DATASET:
         input_dim = config.hidden_size
         hidden_dim = config.hidden_size
     
-    elif args.dataset == 'adult':
-        number_train_df, dummy_train_df, number_valid_df, dummy_valid_df, number_test_df, dummy_test_df = datasets
-        
-        from dataset import AdultDataset
-        train_dataset = AdultDataset(
-            number_train_df,
-            dummy_train_df,
-            atom_pool=None,
-            args=args
-        )
-        
-        valid_dataset = AdultDataset(
-            number_valid_df,
-            dummy_valid_df,
-            atom_pool=None,
-            args=args
-        )
-        
-        test_dataset = AdultDataset(
-            number_test_df,
-            dummy_test_df,
-            atom_pool=None,
-            args=args
-        )
-        
-        input_dim = train_dataset.x_dummy.shape[1]
-        hidden_dim = 512
-        
-    train_dataloader = create_dataloader(train_dataset, args, shuffle=True)
-    valid_dataloader = create_dataloader(valid_dataset, args, shuffle=False)
-    test_dataloader = create_dataloader(test_dataset, args, shuffle=False)
+    elif args.dataset in ds.TAB_DATASET:
+        input_dim = train_dataset.x.shape[1]
+        hidden_dim = args.hidden_dim
+    else:
+        raise NotImplementedError("We only support NLP and tabular dataset now.")
         
     # Load class names
-    class_names = get_class_names(args.dataset)
+    class_names = ds.get_class_names(args.dataset)
     
-    model = BaseModel(
+    model = net.BaseModel(
+        dataset=args.dataset,
+        base=args.base,
         input_dim=input_dim,
         hidden_dim=hidden_dim,
-        vocab_size=vocab_size,
-        num_classes = len(class_names),
-        padding_idx=pad_token_id,
         tf_model=tf_model,
-        args=args,
+        num_classes=len(class_names),
+        dropout=0,
     ).to(gpu)
     
     nll_loss_func = nn.NLLLoss(reduction='mean').to(gpu)
     
+    dir_prefix = f'{RUN}_{args.base}_dataset_{args.dataset}'
+    
     if args.only_eval:
-        DIR_PREFIX = f'{VERSION_NAME}_{args.base_model}_dataset_{args.dataset}_seed_{args.seed}'
-        targets = [d for d in os.listdir(f'./result/{VERSION_NAME}') if d.startswith(DIR_PREFIX)]
-        DIR_PATH = f'./result/{VERSION_NAME}/{targets[-1]}'
-        print(f'DIR_PATH: {DIR_PATH}')
+        targets = [d for d in os.listdir(f'./result/{RUN}') if d.startswith(dir_prefix)]
+        dir_path = f'./result/{RUN}/{targets[-1]}'
+        print(f'Directory Path: {dir_path}')
     else:
         now = datetime.now()
-        CUR_TIME = now.strftime("%y%m%d:%H:%M:%S")
+        cur_time = now.strftime("%y%m%d:%H:%M:%S")
 
-        if 'result' not in os.listdir('.'):
-            os.system(f'mkdir ./result')
+        if args.result_dir not in os.listdir('.'):
+            os.system(f'mkdir ./{args.result_dir}')
         
-        if VERSION_NAME not in os.listdir('./result'):
-            os.system(f'mkdir ./result/{VERSION_NAME}')
+        if RUN not in os.listdir('./result'):
+            os.system(f'mkdir ./result/{RUN}')
 
-        DIR_PATH = f'./result/{VERSION_NAME}/{VERSION_NAME}_{args.base_model}_dataset_{args.dataset}_seed_{args.seed}_{CUR_TIME}'
-        print(f'DIR_PATH: {DIR_PATH}')
+        dir_path = f'./result/{RUN}/{dir_prefix}_seed_{args.seed}_{cur_time}'
+        print(f'Directory Path: {dir_path}')
 
-        os.system(f'mkdir {DIR_PATH}')
+        os.system(f'mkdir {dir_path}')
+        with open(f'{dir_path}/args', 'w') as f:
+            print(args, file=f, flush=True)
 
-        LOG_PATH = f'{DIR_PATH}/log'
+        model = te.train(
+            model=model,
+            loss_func=nll_loss_func,
+            train_dataloader=train_dataloader,
+            valid_dataloader=valid_dataloader,
+            learning_rate=args.learning_rate,
+            weight_decay=args.weight_decay,
+            gamma=args.gamma,
+            epochs=args.epochs,
+            gpu=gpu,
+            class_names=class_names,
+            dir_path=dir_path
+        )
 
-        flog = open(LOG_PATH, 'w')
-        print(args, file=flog, flush=True)
-        train(model, nll_loss_func, train_dataloader, valid_dataloader, args, DIR_PATH, flog)
-        flog.close()
     
-    BEST_MODEL_PATH = f'{DIR_PATH}/model_best.pt'
-    EVAL_PATH = f'{DIR_PATH}/model_eval'
-    
-    feval = open(EVAL_PATH, 'w')
-    model.load_state_dict(torch.load(BEST_MODEL_PATH, map_location=gpu))
+    best_model_path = f'{dir_path}/model_best.pt'    
+    model.load_state_dict(torch.load(best_model_path, map_location=gpu))
         
-    eval_model(model, nll_loss_func, test_dataloader, args, feval=feval)
-        
-    feval.close()
+    te.eval_model(
+        model=model,
+        loss_func=nll_loss_func,
+        test_dataloader=test_dataloader,
+        true_matrix=None,
+        gpu=gpu,
+        class_names=class_names,
+        dir_path=dir_path
+    )
