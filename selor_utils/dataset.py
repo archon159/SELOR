@@ -1,10 +1,13 @@
 import pandas as pd
+import math
+import functools
+import operator
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
-from collections import Counter
+from torch.utils.data import Dataset, DataLoader, random_split
+from collections import Counter, defaultdict
 from sklearn.model_selection import train_test_split
 import pickle
 import random
@@ -15,6 +18,74 @@ NLP_BASE = ['bert', 'roberta']
     
 TAB_DATASET = ['adult']
 TAB_BASE = ['dnn']
+
+def multi_AND(l):
+    return functools.reduce(operator.and_, l)
+
+def load_data(
+    dataset='yelp',
+    data_dir='./data/',
+    seed=7,
+):
+    if dataset=='yelp':
+        # Negative = 0, Positive = 1
+        data_path = f'{data_dir}/yelp_review_polarity_csv'
+
+        train_df = pd.read_csv(f'{data_path}/train.csv', header=None)
+        train_df = train_df.rename(columns={0: 'label', 1: 'text'})
+        train_df['label'] = train_df['label'] - 1
+        _, train_df = train_test_split(train_df, test_size=0.1, random_state=seed, stratify=train_df['label'])
+
+        test_df = pd.read_csv(f'{data_path}/test.csv', header=None)
+        test_df = test_df.rename(columns={0: 'label', 1: 'text'})
+        test_df['label'] = test_df['label'] - 1
+
+        test_df = test_df.reset_index(drop=True)
+        test_df, valid_df = train_test_split(test_df, test_size=0.5, random_state=seed, stratify=test_df['label'])
+    
+    elif dataset=='clickbait':
+        # news = 0, clickbait = 1
+        data_path = f'{data_dir}/clickbait_news_detection'
+
+        train_df = pd.read_csv(f'{data_path}/train.csv')
+        train_df = train_df.loc[train_df['label'].isin(['news', 'clickbait']), ['title', 'text', 'label']]
+        train_df = train_df.dropna()
+        train_df.at[train_df['label']=='news', 'label'] = 0
+        train_df.at[train_df['label']=='clickbait', 'label'] = 1
+        
+        valid_df = pd.read_csv(f'{data_path}/valid.csv')
+        valid_df = valid_df.loc[valid_df['label'].isin(['news', 'clickbait']), ['title', 'text', 'label']]
+        valid_df = valid_df.dropna()
+        valid_df.at[valid_df['label']=='news', 'label'] = 0
+        valid_df.at[valid_df['label']=='clickbait', 'label'] = 1
+
+        test_df, valid_df = train_test_split(valid_df, test_size=0.5, random_state=seed, stratify=valid_df['label'])
+    
+    elif dataset=='adult':
+        # <=50K = 0, >50K = 1
+        data_path = f'{data_dir}/adult'
+        
+        data_df = pd.read_csv(f'{data_path}/adult.csv')
+        categorical_x_col, numerical_x_col, y_col = get_tabular_column_type(dataset)
+        cat_map = get_tabular_category_map(data_df, dataset)
+        
+        number_data_df = numerize_tabular_data(data_df, cat_map, dataset)
+        number_data_df = number_data_df[numerical_x_col + categorical_x_col + y_col]
+        dummy_data_df = pd.get_dummies(number_data_df, columns=categorical_x_col)
+
+        train_df, test_df = train_test_split(
+            dummy_data_df, test_size=0.2, random_state=seed, stratify=number_data_df[y_col[0]]
+        )
+        valid_df, test_df = train_test_split(
+            test_df, test_size=0.5, random_state=seed, stratify=test_df[y_col[0]]
+        )
+
+    else:
+        assert(0)
+        
+    train_df, valid_df, test_df = [df.reset_index(drop=True) for df in [train_df, valid_df, test_df]]
+    
+    return train_df, valid_df, test_df
 
 def get_dataset_type(dataset='yelp'):
     if dataset in NLP_DATASET:
@@ -154,20 +225,22 @@ def get_tabular_numerical_max(data_df, dataset='adult'):
         
     return numerical_max
         
-def create_dataloader(
-    dataset,
-    batch_size,
-    num_workers,
-    shuffle
+def load_tabular_info(
+    dataset='adult',
+    data_dir='./data/'
 ):
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        shuffle=shuffle,
-        persistent_workers=False,
-        pin_memory=False,
-    )
+    data_path = f'{data_dir}/{dataset}'
+
+    if dataset=='adult':
+        data_df = pd.read_csv(f'{data_path}/adult.csv')
+    else:
+        raise NotImplementedError(f'Dataset {dataset} is not supported as a tabular dataset.')
+        
+    cat_map = get_tabular_category_map(data_df, dataset)
+    numerical_threshold = get_tabular_numerical_threshold(data_df, dataset=dataset)
+    numerical_max = get_tabular_numerical_max(data_df, dataset=dataset)
+    
+    return cat_map, numerical_threshold, numerical_max
 
 def create_dataset(
     data_df,
@@ -205,6 +278,22 @@ def create_dataset(
     
     return ds
         
+def create_dataloader(
+    dataset,
+    batch_size,
+    num_workers,
+    shuffle
+):
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        shuffle=shuffle,
+        persistent_workers=False,
+        pin_memory=False,
+    )
+    
+    
 class YelpDataset(Dataset):
     def __init__(
         self,
@@ -318,7 +407,6 @@ class ClickbaitDataset(Dataset):
                 
             article_ = np.concatenate((title_, text_))
 
-            # x_ indicates if the satisfaction of atoms for current sample
             x_ = self.ap.check_atoms(article_)
                 
             x_ = torch.Tensor(x_).long()
@@ -327,19 +415,15 @@ class ClickbaitDataset(Dataset):
             
         
         y = self.y[i]
-#         y = torch.Tensor([y]).long()
         
         return (input_ids, attention_mask, x_), y
         
 class AdultDataset(Dataset):
-#     def __init__(self, number_df, dummy_df, atom_pool, args):
     def __init__(
         self,
         df,
         atom_pool,
     ):
-#         self.x_number = number_df.drop(columns=['income'])
-#         self.x_dummy = dummy_df.drop(columns=['income'])
         self.x = df.drop(columns=['income'])
         self.y = df['income'].astype(dtype='int64')
         self.ap = atom_pool
@@ -350,8 +434,6 @@ class AdultDataset(Dataset):
         return len(self.y)
     
     def __getitem__(self, i):
-#         x_number = self.x_number.loc[i]
-#         x_dummy = self.x_dummy.loc[i]
         x_dummy = self.x.loc[i]
         x = torch.tensor(x_dummy).float()
 
@@ -362,392 +444,260 @@ class AdultDataset(Dataset):
             x_ = torch.Tensor([0]).long()
         
         y = self.y[i]
-#         y = torch.Tensor([y]).long()
         
         return (x, x_), y
-        
-def load_tabular_info(
-    dataset='adult',
-    data_dir='./data/'
-):
-    data_path = f'{data_dir}/{dataset}'
-
-    if dataset=='adult':
-        data_df = pd.read_csv(f'{data_path}/adult.csv')
-    else:
-        raise NotImplementedError(f'Dataset {dataset} is not supported as a tabular dataset.')
-        
-    cat_map = get_tabular_category_map(data_df, dataset)
-    numerical_threshold = get_tabular_numerical_threshold(data_df, dataset=dataset)
-    numerical_max = get_tabular_numerical_max(data_df, dataset=dataset)
     
-    return cat_map, numerical_threshold, numerical_max
-        
-def load_data(
-    dataset='yelp',
-    data_dir='./data/',
+def get_weight(
+    pretrain_dataset,
+    n_data,
+):
+    noise_mu = torch.std(pretrain_dataset.mu)
+    noise_sigma = torch.std(pretrain_dataset.sigma)
+    noise_coverage = torch.std(pretrain_dataset.n / n_data)
+    
+    weight_mu = 1 / (2 * (noise_mu ** 2))
+    weight_sigma = 1 / (2 * (noise_sigma ** 2))
+    weight_coverage = 1 / (2 * (noise_coverage ** 2))
+    
+    return weight_mu, weight_sigma, weight_coverage
+    
+def create_pretrain_dataset(
+    candidate,
+    true_matrix,
+    train_y,
+    dataset,
+    n_sample,
+    num_classes=2,
+    min_df=200,
+    max_df=0.95,
+):
+    p_ds = PretrainDataset(
+        candidate,
+        true_matrix,
+        train_y,
+        n_sample,
+        num_classes,
+        min_df,
+        max_df,
+    )
+    
+    return p_ds
+    
+def create_pretrain_dataloader(
+    pretrain_dataset,
+    batch_size,
+    num_workers,
+    test_ratio=0.2,
     seed=7,
 ):
-    if dataset=='yelp':
-        # Negative = 0, Positive = 1
-        data_path = f'{data_dir}/yelp_review_polarity_csv'
+    n_test = int(len(pretrain_dataset) * 0.2)
+    n_train = len(pretrain_dataset) - n_test
 
-        train_df = pd.read_csv(f'{data_path}/train.csv', header=None)
-        train_df = train_df.rename(columns={0: 'label', 1: 'text'})
-        train_df['label'] = train_df['label'] - 1
-        _, train_df = train_test_split(train_df, test_size=0.1, random_state=seed, stratify=train_df['label'])
-
-        test_df = pd.read_csv(f'{data_path}/test.csv', header=None)
-        test_df = test_df.rename(columns={0: 'label', 1: 'text'})
-        test_df['label'] = test_df['label'] - 1
-
-        test_df = test_df.reset_index(drop=True)
-        test_df, valid_df = train_test_split(test_df, test_size=0.5, random_state=seed, stratify=test_df['label'])
+    test_dataset, train_dataset = random_split(
+        pretrain_dataset,
+        [n_test, n_train],
+        torch.Generator().manual_seed(seed)
+    )
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        shuffle=True,
+        persistent_workers=False,
+        pin_memory=False,
+    )
+    test_dataloader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        shuffle=False,
+        persistent_workers=False,
+        pin_memory=False,
+    )
     
-    elif dataset=='clickbait':
-        # news = 0, clickbait = 1
-        data_path = f'{data_dir}/clickbait_news_detection'
-
-        train_df = pd.read_csv(f'{data_path}/train.csv')
-        train_df = train_df.loc[train_df['label'].isin(['news', 'clickbait']), ['title', 'text', 'label']]
-        train_df = train_df.dropna()
-        train_df.at[train_df['label']=='news', 'label'] = 0
-        train_df.at[train_df['label']=='clickbait', 'label'] = 1
-        
-        valid_df = pd.read_csv(f'{data_path}/valid.csv')
-        valid_df = valid_df.loc[valid_df['label'].isin(['news', 'clickbait']), ['title', 'text', 'label']]
-        valid_df = valid_df.dropna()
-        valid_df.at[valid_df['label']=='news', 'label'] = 0
-        valid_df.at[valid_df['label']=='clickbait', 'label'] = 1
-
-        test_df, valid_df = train_test_split(valid_df, test_size=0.5, random_state=seed, stratify=valid_df['label'])
+    return train_dataloader, test_dataloader
     
-    elif dataset=='adult':
-        # <=50K = 0, >50K = 1
-        data_path = f'{data_dir}/adult'
-        
-        data_df = pd.read_csv(f'{data_path}/adult.csv')
-        categorical_x_col, numerical_x_col, y_col = get_tabular_column_type(dataset)
-        cat_map = get_tabular_category_map(data_df, dataset)
-        
-        number_data_df = numerize_tabular_data(data_df, cat_map, dataset)
-        number_data_df = number_data_df[numerical_x_col + categorical_x_col + y_col]
-        dummy_data_df = pd.get_dummies(number_data_df, columns=categorical_x_col)
-#         print(dummy_data_df.columns)
-#         assert(0)
-        
-#         number_train_df, number_test_df, dummy_train_df, dummy_test_df = train_test_split(
-#             number_data_df, dummy_data_df, test_size=0.2, random_state=seed, stratify=number_data_df[y_col[0]]
-#         )
-#         number_valid_df, number_test_df, dummy_valid_df, dummy_test_df = train_test_split(
-#             number_test_df, dummy_test_df, test_size=0.5, random_state=seed, stratify=number_test_df[y_col[0]]
-#         )
-
-#         number_train_df = number_train_df.reset_index(drop=True)
-#         number_valid_df = number_valid_df.reset_index(drop=True)
-#         number_test_df = number_test_df.reset_index(drop=True)
-
-#         dummy_train_df = dummy_train_df.reset_index(drop=True)
-#         dummy_valid_df = dummy_valid_df.reset_index(drop=True)
-#         dummy_test_df = dummy_test_df.reset_index(drop=True)
-        
-#         return (number_train_df, dummy_train_df, number_valid_df, dummy_valid_df, number_test_df, dummy_test_df), cat_map
-        train_df, test_df = train_test_split(
-            dummy_data_df, test_size=0.2, random_state=seed, stratify=number_data_df[y_col[0]]
-        )
-        valid_df, test_df = train_test_split(
-            test_df, test_size=0.5, random_state=seed, stratify=test_df[y_col[0]]
-        )
-
-    else:
-        assert(0)
-        
-    train_df, valid_df, test_df = [df.reset_index(drop=True) for df in [train_df, valid_df, test_df]]
-    
-    return train_df, valid_df, test_df
-    
-class AdultPretrainDataset(Dataset):
+class ClassSamples():
     def __init__(
         self,
-        tm,
-        train_y_,
-        n_sample,
-        rule_length,
-        min_df=200,
-        max_df=0.95,
-        candidate=None,
-        args=None,
+        class_idx,
+        need,
     ):
-        self.gpu = torch.device(f'cuda:{args.gpu}')
-        self.tm = tm.to(self.gpu)
-        self.train_y_ = torch.tensor(train_y_).to(self.gpu)
-        
-        n_atom, n_data = tm.shape
+        self.class_idx = class_idx
+        self.num_samples = 0
+        self.need = need
+        self.done = False
         
         self.x = []
         self.mu = []
         self.sigma = []
         self.n = []
-        self.rule_length = rule_length
         
-        if rule_length==1:
-            assert(n_sample == n_atom)
-            for i in tqdm(range(n_sample)):
-                rule = set([i])
-                mu, sigma, n = self.__get_answer__(rule)
-
-                self.x.append(rule)
-                self.mu.append(mu)
-                self.sigma.append(sigma)
-                self.n.append(n)
-                
-            return
+    def add(
+        self,
+        x,
+        mu,
+        sigma,
+        n,
+    ):
+        self.x.append(x)
+        self.mu.append(mu)
+        self.sigma.append(sigma)
+        self.n.append(n)
         
-        pbar = tqdm(range(n_sample))
+        self.num_samples += 1
         
-        n_poor = 0
-        n_rich = 0
+        if self.num_samples == self.need:
+            self.done=True
         
-        while len(self.x) < n_sample:
-            rules = random.sample(candidate, n_sample)
-            for rule in rules:
-                mu, sigma, n = self.__get_answer__(rule)
-                if (n < min_df) or (n > (max_df * n_data)):
-                    continue
-                    
-                _, mi = torch.max(mu, dim=0)
-                mi = mi.item()
-
-                if mi == 0 and n_poor < (n_sample / 2):
-                    self.x.append(rule)
-                    self.mu.append(mu)
-                    self.sigma.append(sigma)
-                    self.n.append(n)
-                    n_poor += 1
-                    pbar.update(1)
-                    
-                elif mi == 1 and n_rich < (n_sample / 2):
-                    self.x.append(rule)
-                    self.mu.append(mu)
-                    self.sigma.append(sigma)
-                    self.n.append(n)
-                    n_rich += 1
-                    pbar.update(1)
-                else:
-                    continue
-
-        pbar.close()
+    def add_multiple(
+        self,
+        x,
+        mu,
+        sigma,
+        n,
+    ):
+        self.x.append(x)
+        self.mu.append(mu)
+        self.sigma.append(sigma)
+        self.n.append(n)
         
-    def __get_answer__(self, rule):
-        out = torch.index_select(self.tm, 0, torch.tensor(list(rule)).to(self.gpu).long())
-        out = torch.sum(out, dim=0)
-        out = (out == self.rule_length)
-        n = torch.sum(out).item()
-
-        satis_ans = self.train_y_[out]
-        if len(satis_ans) == 0:
-            mu = torch.tensor([1/2, 1/2]).to(self.gpu)
-            sigma = torch.tensor([0, 0]).to(self.gpu)
-        else:
-            satis_ans = satis_ans.long()
-            satis_ans_one_hot = F.one_hot(satis_ans, num_classes=2).float()
-
-            mu = torch.mean(satis_ans_one_hot, dim=0)
-            sigma = torch.std(satis_ans_one_hot, unbiased=False, dim=0)
-        
-        return mu.cpu(), sigma.cpu(), n
-        
-    def __len__(self):
-        return len(self.x)
+        self.num_samples += len(x)
+        if self.num_samples >= self.need:
+            self.x = torch.cat(self.x)
+            self.mu = torch.cat(self.mu)
+            self.sigma = torch.cat(self.sigma)
+            self.n = torch.cat(self.n)
+            
+            self.x = self.x[:self.need]
+            self.mu = self.mu[:self.need]
+            self.sigma = self.sigma[:self.need]
+            self.n = self.n[:self.need]
+            
+            self.num_samples = self.need
+            
+        if self.num_samples == self.need:
+            self.done=True
     
-    def __getitem__(self, i):
-        return torch.tensor(list(self.x[i])), self.mu[i], self.sigma[i], self.n[i]
     
-class ClickbaitPretrainDataset(Dataset):
+class PretrainDataset(Dataset):
     def __init__(
         self,
+        candidate,
         tm,
-        train_y_,
+        train_y,
         n_sample,
-        rule_length,
+        num_classes=2,
         min_df=200,
         max_df=0.95,
-        candidate=None,
-        args=None,
     ):
-        assert(rule_length == 1 or n_sample % 2 == 0)
-        self.gpu = torch.device(f'cuda:{args.gpu}')
-        self.tm = tm.to(self.gpu)
-        self.train_y_ = torch.tensor(train_y_).to(self.gpu)
-        
-        n_atom, n_data = tm.shape
+        self.n_atom, self.n_data = tm.shape
+        self.n_candidate, self.rule_length = candidate.shape
+        self.num_classes = num_classes
         
         self.x = []
         self.mu = []
         self.sigma = []
         self.n = []
-        self.rule_length = rule_length
         
-        if rule_length==1:
-            assert(n_sample == n_atom)
-            for i in tqdm(range(n_sample)):
-                rule = set([i])
-                mu, sigma, n = self.__get_answer__(rule)
-
-                self.x.append(rule)
-                self.mu.append(mu)
-                self.sigma.append(sigma)
-                self.n.append(n)
+        with torch.no_grad():
+            if self.rule_length == 1:
+                self.x = candidate
+                self.mu, self.sigma, self.n = self.__get_answer__(
+                    candidate,
+                    tm,
+                    train_y
+                )
+            else:
+                assert(n_sample % num_classes == 0)
+                bsz = n_sample
+                n_batch = math.ceil(self.n_candidate / bsz)
                 
-            return
-        
-        pbar = tqdm(range(n_sample))
-        
-        n_clickbait = 0
-        n_news = 0
-        
-        while len(self.x) < n_sample:
-            rules = random.sample(candidate, n_sample)
-            for rule in rules:
-                mu, sigma, n = self.__get_answer__(rule)
-                if (n < min_df) or (n > (max_df * n_data)):
-                    continue
+                sample_dict = {}
+                for i in range(num_classes):
+                    sample_dict[i] = ClassSamples(
+                        class_idx=i,
+                        need=(n_sample // num_classes),
+                    )
+                
+                pbar = tqdm(range(n_sample))
+                
+                b = 0
+                while not multi_AND([sample_dict[i].done for i in range(num_classes)]):
+                    start = (b % n_batch) * bsz
+                    end = min(start + bsz, self.n_candidate)
+                    b += 1
                     
-                _, mi = torch.max(mu, dim=0)
-                mi = mi.item()
-
-                if mi == 0 and n_news < (n_sample / 2):
-                    self.x.append(rule)
-                    self.mu.append(mu)
-                    self.sigma.append(sigma)
-                    self.n.append(n)
-                    n_news += 1
-                    pbar.update(1)
+                    c = candidate[start:end]
+                    mu, sigma, n = self.__get_answer__(
+                        c,
+                        tm,
+                        train_y
+                    )
+                
+                    mv, mi = torch.max(mu, dim=1)
+                    mask = (n >= min_df) & (n <= (max_df * self.n_data)) & (mv != (1 / num_classes))
+                    class_counter = Counter(mi.cpu().numpy())
                     
-                elif mi == 1 and n_clickbait < (n_sample / 2):
-                    self.x.append(rule)
-                    self.mu.append(mu)
-                    self.sigma.append(sigma)
-                    self.n.append(n)
-                    n_clickbait += 1
-                    pbar.update(1)
-                else:
-                    continue
+                    for i in range(num_classes):
+                        if not sample_dict[i].done:
+                            bef = sample_dict[i].num_samples
+                            class_mask = mask & (mi==i)
+                            sample_dict[i].add_multiple(c[class_mask], mu[class_mask], sigma[class_mask], n[class_mask])
+                            aft = sample_dict[i].num_samples
+                            pbar.update(aft-bef)
+                            
+                pbar.close()
+                        
+                self.x = torch.cat([sample_dict[i].x for i in range(num_classes)])
+                self.mu = torch.cat([sample_dict[i].mu for i in range(num_classes)])
+                self.sigma = torch.cat([sample_dict[i].sigma for i in range(num_classes)])
+                self.n = torch.cat([sample_dict[i].n for i in range(num_classes)])
+                
+                assert(len(self.x) == len(self.mu) == len(self.sigma) == len(self.n) == n_sample)
+                
+                rand_idx = torch.randperm(n_sample, device=candidate.device)
+                
+                self.x = self.x[rand_idx]
+                self.mu = self.mu[rand_idx]
+                self.sigma = self.sigma[rand_idx]
+                self.n = self.n[rand_idx]
 
-        pbar.close()
-        
-    def __get_answer__(self, rule):
-        out = torch.index_select(self.tm, 0, torch.tensor(list(rule)).to(self.gpu).long())
-        out = torch.sum(out, dim=0)
-        out = (out == self.rule_length)
-        n = torch.sum(out).item()
-
-        satis_ans = self.train_y_[out]
-        if len(satis_ans) == 0:
-            mu = torch.tensor([1/2, 1/2]).to(self.gpu)
-            sigma = torch.tensor([0, 0]).to(self.gpu)
-        else:
-            satis_ans = satis_ans.long()
-            satis_ans_one_hot = F.one_hot(satis_ans, num_classes=2).float()
-
-            mu = torch.mean(satis_ans_one_hot, dim=0)
-            sigma = torch.std(satis_ans_one_hot, unbiased=False, dim=0)
-        
-        return mu.cpu(), sigma.cpu(), n
-        
-    def __len__(self):
-        return len(self.x)
-    
-    def __getitem__(self, i):
-        return torch.tensor(list(self.x[i])), self.mu[i], self.sigma[i], self.n[i]
-    
-    
-class YelpPretrainDataset(Dataset):
-    def __init__(
+        self.x = self.x.cpu()
+        self.mu = self.mu.cpu()
+        self.sigma = self.sigma.cpu()
+        self.n = self.n.cpu()
+            
+    def __get_answer__(
         self,
+        c,
         tm,
-        train_y_,
-        n_sample,
-        rule_length,
-        min_df=200,
-        max_df=0.95,
-        candidate=None,
-        args=None,
+        train_y
     ):
-        assert(rule_length == 1 or n_sample % 2 == 0)
-        self.gpu = torch.device(f'cuda:{args.gpu}')
-        self.tm = tm.to(self.gpu)
-        self.train_y_ = torch.tensor(train_y_).to(self.gpu)
-        
-        n_atom, n_data = tm.shape
-        
-        self.x = []
-        self.mu = []
-        self.sigma = []
-        self.n = []
-        self.rule_length = rule_length
-        
-        if rule_length==1:
-            assert(n_sample == n_atom)
-            for i in tqdm(range(n_sample)):
-                rule = set([i])
-                mu, sigma, n = self.__get_answer__(rule)
+        bsz, _ = c.shape
+        target = torch.index_select(tm, 0, c.flatten()) 
+        target = target.reshape(bsz, self.rule_length, self.n_data)
 
-                self.x.append(rule)
-                self.mu.append(mu)
-                self.sigma.append(sigma)
-                self.n.append(n)
-                
-            return
+        satis_num = torch.sum(target, dim=1)
+        satis_mask = (satis_num == self.rule_length)
         
-        pbar = tqdm(range(n_sample))
-        
-        n_pos = 0
-        n_neg = 0
-        
-        while len(self.x) < n_sample:
-            rules = random.sample(candidate, n_sample)
-            for rule in rules:
-                mu, sigma, n = self.__get_answer__(rule)
-                if (n < min_df) or (n > (max_df * n_data)):
-                    continue
-                    
-                if mu > 0.5 and n_pos < (n_sample / 2):
-                    self.x.append(rule)
-                    self.mu.append(mu)
-                    self.sigma.append(sigma)
-                    self.n.append(n)
-                    n_pos += 1
-                    pbar.update(1)
-                elif mu < 0.5 and n_neg < (n_sample / 2):
-                    self.x.append(rule)
-                    self.mu.append(mu)
-                    self.sigma.append(sigma)
-                    self.n.append(n)
-                    n_neg += 1
-                    pbar.update(1)
-                else:
-                    continue
+        n = torch.sum(satis_mask, dim=1)
 
-        pbar.close()
+        mu = []
+        sigma = []
+        for m in satis_mask:
+            satis_ans = train_y[m]
+            satis_ans = F.one_hot(satis_ans.long(), num_classes=self.num_classes).float()
+            mu.append(torch.mean(satis_ans, dim=0))
+            sigma.append(torch.std(satis_ans, dim=0, unbiased=False))
+
+        mu = torch.stack(mu)
+        sigma = torch.stack(sigma)
         
-    def __get_answer__(self, rule):
-        out = torch.index_select(self.tm, 0, torch.tensor(list(rule)).to(self.gpu).long())
-        out = torch.sum(out, dim=0)
-        out = (out == self.rule_length)
-        n = torch.sum(out).item()
-
-        satis_ans = self.train_y_[out]
-        if len(satis_ans) == 0:
-            satis_ans = torch.tensor([0])
-        satis_ans = satis_ans.float()
-
-        mu = torch.mean(satis_ans)
-        sigma = torch.std(satis_ans, unbiased=False)
-        return mu.cpu(), sigma.cpu(), n
+        return mu, sigma, n
         
     def __len__(self):
         return len(self.x)
     
     def __getitem__(self, i):
-        return torch.tensor(list(self.x[i])), self.mu[i], self.sigma[i], self.n[i]
+        return self.x[i], self.mu[i], self.sigma[i], self.n[i]

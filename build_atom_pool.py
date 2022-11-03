@@ -137,6 +137,10 @@ if __name__ == "__main__":
         n_atom = ap.num_atoms()
         print(f'{n_atom} atoms added')
 
+        # For efficient memory use
+        ap.train_x = None
+        ap.train_y = None
+        
         with open(f'./{args.save_dir}/atom_pool/atom_pool_{args.dataset}_num_atoms_{args.num_atoms}.pkl', 'wb') as f:
             pickle.dump(ap, f, pickle.HIGHEST_PROTOCOL)
             
@@ -174,6 +178,10 @@ if __name__ == "__main__":
         n_atom = ap.num_atoms()
         print(f'{n_atom} atoms added')
 
+        # For efficient memory use
+        ap.train_x = None
+        ap.train_y = None
+        
         with open(f'./{args.save_dir}/atom_pool/atom_pool_{args.dataset}.pkl', 'wb') as f:
             pickle.dump(ap, f, pickle.HIGHEST_PROTOCOL)
     else:

@@ -40,55 +40,50 @@ class Log(object):
 # The function for training cp predictor.
 def pretrain(
     ce_model,
-    pretrain_train_dataloader,
-    atom_embedding,
+    train_dataloader,
+    learning_rate,
+    weight_decay,
+    epochs,
+    max_rule_len,
     n_data,
     weight_mu,
     weight_sigma,
     weight_coverage,
-    args
+    gpu
 ):
-    gpu = torch.device(f'cuda:{args.gpu}')
-    
-    n_atom, hidden_dim = atom_embedding.shape
+    n_atom, hidden_dim = ce_model.atom_embedding.shape
 
-    optimizer = torch.optim.AdamW(ce_model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    optimizer = torch.optim.AdamW(ce_model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     optimizer.zero_grad()
     
     ce_model.train()
     
-    for epoch in range(args.epochs):
+    for epoch in range(epochs):
         print(f'Epoch {epoch}')
-        pbar = tqdm(range(len(pretrain_train_dataloader)))
+        pbar = tqdm(range(len(train_dataloader)))
 
-        ce_losses = []
-        mu_losses = []
-        sigma_losses = []
-        coverage_losses = []
-        for d in pretrain_train_dataloader:
+        total_losses = AverageMeter()
+        mu_losses = AverageMeter()
+        sigma_losses = AverageMeter()
+        coverage_losses = AverageMeter()
+        
+        for d in train_dataloader:
             x, mu, sigma, n = d
-            #mu = torch.stack(((1 - mu), mu), dim=1)
+            bsz = len(x)
 
             batch_size, rule_len = x.shape
             # We pad dummy if the rule length is smaller than max_rule_len
-            x = F.pad(x, (0, args.max_rule_len - rule_len))
+            x = F.pad(x, (0, max_rule_len - rule_len)).to(gpu)
 
             mu = mu.to(gpu)
             sigma = sigma.to(gpu)
             coverage = (n / n_data).to(gpu)
 
-            e = atom_embedding[x, :].detach()
-            e = e.to(gpu)
-            mu_, sigma_, coverage_ = ce_model(e)
-
+            mu_, sigma_, coverage_ = ce_model(x)
+    
             # L2 distance as loss
-            if args.dataset == 'yelp':
-                mu_loss = torch.mean(F.pairwise_distance(mu.unsqueeze(dim=-1), mu_.unsqueeze(dim=-1)))
-                sigma_loss = torch.mean(F.pairwise_distance(sigma.unsqueeze(dim=-1), sigma_.unsqueeze(dim=-1)))
-            else:
-                mu_loss = torch.mean(F.pairwise_distance(mu, mu_))
-                sigma_loss = torch.mean(F.pairwise_distance(sigma, sigma_))
-            
+            mu_loss = torch.mean(F.pairwise_distance(mu, mu_))
+            sigma_loss = torch.mean(F.pairwise_distance(sigma, sigma_))
             coverage_loss = torch.mean(F.pairwise_distance(coverage.unsqueeze(dim=-1), coverage_.unsqueeze(dim=-1)))
 
             loss = weight_mu * mu_loss + weight_sigma * sigma_loss + weight_coverage * coverage_loss
@@ -97,16 +92,12 @@ def pretrain(
             loss.backward()
             optimizer.step()
 
-            ce_losses.append(loss.item())
-            mu_losses.append(mu_loss.item())
-            coverage_losses.append(coverage_loss.item())
+            total_losses.update(loss.item(), n=bsz)
+            mu_losses.update(mu_loss.item(), n=bsz)
+            sigma_losses.update(sigma_loss.item(), n=bsz)
+            coverage_losses.update(coverage_loss.item(), n=bsz)
 
-            avg_ce_loss = torch.mean(torch.tensor(ce_losses)).item()
-            avg_mu_loss = torch.mean(torch.tensor(mu_losses)).item()
-            avg_sigma_loss = torch.mean(torch.tensor(mu_losses)).item()
-            avg_coverage_loss = torch.mean(torch.tensor(coverage_losses)).item()
-
-            pbar.set_description(f'Train Loss: {avg_ce_loss:.6f} ({avg_mu_loss:.6f}, {avg_sigma_loss:.6f}, {avg_coverage_loss:.6f})')
+            pbar.set_description(f'Train Loss: {total_losses.avg:.6f} ({mu_losses.avg:.6f}, {sigma_losses.avg:.6f}, {coverage_losses.avg:.6f})')
             pbar.update(1)
         pbar.close()
 
@@ -114,14 +105,15 @@ def pretrain(
 
 def eval_pretrain(
     ce_model,
-    pretrain_test_dataloader,
-    atom_embedding,
+    test_dataloader,
+#     atom_embedding,
     n_data,
     class_names,
-    args,
+#     args,
+    gpu,
 ):
-    gpu = torch.device(f'cuda:{args.gpu}')
-    n_atom, hidden_dim = atom_embedding.shape
+#     gpu = torch.device(f'cuda:{args.gpu}')
+    n_atom, hidden_dim = ce_model.atom_embedding.shape
     ce_model.eval()
     
     mu_pred = []
@@ -131,7 +123,7 @@ def eval_pretrain(
     coverage_pred = []
     coverage_answer = []
     
-    for d in tqdm(pretrain_test_dataloader):
+    for d in tqdm(test_dataloader):
         x, mu, sigma, n = d
         coverage = n / n_data
 
@@ -139,9 +131,7 @@ def eval_pretrain(
         x = F.pad(x, (0, 4 - rule_len))
 
         with torch.no_grad():
-            e = atom_embedding[x, :].detach()
-            e = e.to(gpu)
-            mu_, sigma_, coverage_ = ce_model(e)
+            mu_, sigma_, coverage_ = ce_model(x)
 
             mu_pred.extend(mu_)
             mu_answer.extend(mu)
@@ -150,18 +140,11 @@ def eval_pretrain(
             coverage_pred.extend(coverage_)
             coverage_answer.extend(coverage)
 
-    if args.dataset == 'yelp':
-        mu_pred = torch.tensor(mu_pred)
-        mu_answer = torch.tensor(mu_answer)
-        
-        sigma_pred = torch.tensor(sigma_pred)
-        sigma_answer = torch.tensor(sigma_answer)
-    else:
-        mu_pred = torch.stack(mu_pred).cpu()
-        mu_answer = torch.stack(mu_answer).cpu()
-    
-        sigma_pred = torch.stack(sigma_pred).cpu()
-        sigma_answer = torch.stack(sigma_answer).cpu()
+    mu_pred = torch.stack(mu_pred).cpu()
+    mu_answer = torch.stack(mu_answer).cpu()
+
+    sigma_pred = torch.stack(sigma_pred).cpu()
+    sigma_answer = torch.stack(sigma_answer).cpu()
         
     coverage_pred = torch.tensor(coverage_pred)
     coverage_answer = torch.tensor(coverage_answer)
@@ -170,15 +153,9 @@ def eval_pretrain(
     avg_sigma_err = torch.mean(torch.abs(sigma_pred - sigma_answer)).item()
     avg_coverage_err = torch.mean(torch.abs(coverage_pred - coverage_answer)).item()
     
-    # The label of predicted probability
-    #_, q_mu_pred = torch.max(mu_pred)
-    
-    if args.dataset == 'yelp':
-        q_mu_pred = mu_pred > 0.5
-        q_mu_answer = (mu_answer > 0.5)
-    else:
-        q_mu_pred = torch.max(mu_pred, dim=1)[1]
-        q_mu_answer = torch.max(mu_answer, dim=1)[1]
+    # The label of predicted probability    
+    q_mu_pred = torch.max(mu_pred, dim=1)[1]
+    q_mu_answer = torch.max(mu_answer, dim=1)[1]
 
     classification_dict = classification_report(q_mu_answer, q_mu_pred, labels=list(range(len(class_names))), target_names=class_names, output_dict=True)
     f1 = classification_dict['macro avg']['f1-score']
@@ -201,7 +178,7 @@ def train_epoch(
         inputs, y = d
         inputs = [i.to(gpu) for i in inputs]
         y = y.to(gpu)
-        batch_size = len(y)
+        bsz = len(y)
         
         outputs, _, _ = model(
             inputs
@@ -213,7 +190,7 @@ def train_epoch(
         loss.backward()
         optimizer.step()
         
-        train_loss.update(loss.item(), n=batch_size)
+        train_loss.update(loss.item(), n=bsz)
 
         pbar.update(1)
         pbar.set_description(f'Train Loss: {train_loss.avg:.3f}')

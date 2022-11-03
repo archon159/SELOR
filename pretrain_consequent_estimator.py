@@ -1,310 +1,215 @@
 import torch
-from torch.utils.data import  Dataset, DataLoader, random_split
 import pickle
 import copy
 import numpy as np
 import time
 from tqdm import tqdm
 import os
+from prettytable import PrettyTable
 
-from model import ConsequentEstimator
-from dataset import get_dataset, get_class_names
-from atom_pool import AtomPool, get_true_matrix
-from utils import parse_arguments, reset_seed
-from train_eval import pretrain, eval_pretrain
-
-def create_pretrain_dataloader(pretrain_dataset, test_ratio=0.2):
-    n_test = int(len(pretrain_dataset) * 0.2)
-    n_train = len(pretrain_dataset) - n_test
-
-    pretrain_test, pretrain_train = random_split(
-        pretrain_dataset,
-        [n_test, n_train],
-        torch.Generator().manual_seed(args.seed)
-    )
-    pretrain_train_dataloader = DataLoader(
-        pretrain_train,
-        batch_size=16,
-        num_workers=4,
-        shuffle=True,
-        persistent_workers=False,
-        pin_memory=False,
-    )
-    pretrain_test_dataloader = DataLoader(
-        pretrain_test,
-        batch_size=16,
-        num_workers=4,
-        shuffle=False,
-        persistent_workers=False,
-        pin_memory=False,
-    )
-    
-    return pretrain_train_dataloader, pretrain_test_dataloader
-
-def get_weight(pretrain_dataset, n_data, dataset='yelp'):
-    if dataset == 'yelp':
-        noise_mu = torch.std(torch.tensor(pretrain_dataset.mu))
-        noise_sigma = torch.std(torch.tensor(pretrain_dataset.sigma))
-        noise_coverage = torch.std(torch.tensor(pretrain_dataset.n).float() / n_data)
-    else:
-        noise_mu = torch.mean(torch.std(torch.stack(pretrain_dataset.mu, dim=0), dim=0))
-        noise_sigma = torch.mean(torch.std(torch.stack(pretrain_dataset.sigma, dim=0), dim=0))
-        noise_coverage = torch.std(torch.tensor(pretrain_dataset.n).float() / n_data)
-    
-    weight_mu = 1 / (2 * (noise_mu ** 2))
-    weight_sigma = 1 / (2 * (noise_sigma ** 2))
-    weight_coverage = 1 / (2 * (noise_coverage ** 2))
-    
-    return weight_mu, weight_sigma, weight_coverage
-
-def get_pretrain_dataset(
-    n_sample,
-    rule_length,
-    true_matrix,
-    train_y_,
-    candidate,
-    create,
-    dir_path,
-    args
-):
-    if create:
-        if args.dataset == 'yelp':
-            pretrain_dataset = YelpPretrainDataset(
-                true_matrix,
-                train_y_,
-                n_sample,
-                rule_length,
-                candidate=candidate,
-                args=args,
-            )
-        elif args.dataset == 'clickbait':
-            pretrain_dataset = ClickbaitPretrainDataset(
-                true_matrix,
-                train_y_,
-                n_sample,
-                rule_length,
-                candidate=candidate,
-                args=args,
-            )
-        elif args.dataset == 'adult':
-            pretrain_dataset = AdultPretrainDataset(
-                true_matrix,
-                train_y_,
-                n_sample,
-                rule_length,
-                candidate=candidate,
-                args=args,
-            )
-        else:
-            assert(0)
-        
-        with open(f'{dir_path}/pretrain_dataset_{rule_length}_n_sample_{n_sample}_min_df_{args.min_df}_max_df_{args.max_df}.pkl', 'wb') as f:
-            pickle.dump(pretrain_dataset, f, pickle.HIGHEST_PROTOCOL)
-            
-    else:
-        with open(f'{dir_path}/pretrain_dataset_{rule_length}_n_sample_{n_sample}_min_df_{args.min_df}_max_df_{args.max_df}.pkl', 'rb') as f:
-            pretrain_dataset = pickle.load(f)
-    
-    return pretrain_dataset
-
-def get_pretrained_model(
-    ce_model,
-    pretrain_train_dataloader,
-    rule_length,
-    atom_embedding,
-    n_data,
-    weight_mu,
-    weight_sigma,
-    weight_coverage,
-    create,
-    dir_path,
-    args
-):
-    if create:
-        ce_model = pretrain(
-            ce_model,
-            pretrain_train_dataloader,
-            atom_embedding,
-            n_data,
-            weight_mu,
-            weight_sigma,
-            weight_coverage,
-            args
-        )
-        torch.save(ce_model.state_dict(), f'{dir_path}/ce_pretrain_{rule_length}_{args.base_model}_dataset_{args.dataset}.pt')
-    else:
-        ce_model.load_state_dict(
-            torch.load(f'{dir_path}/ce_pretrain_{rule_length}_{args.base_model}_dataset_{args.dataset}.pt'),
-            strict=True
-        )
-    
-    return ce_model
+# Import from custom files
+from selor_utils import atom as at
+from selor_utils import dataset as ds
+from selor_utils import net
+from selor_utils import train_eval as te
+from selor_utils import utils
 
 
 if __name__ == "__main__":
-    args = parse_arguments()
+    args = utils.parse_arguments()
+    
+    dtype = ds.get_dataset_type(args.dataset)
+    btype = ds.get_base_type(args.base)
+    
+    assert(dtype==btype)
+
     seed = args.seed
     gpu = torch.device(f'cuda:{args.gpu}')
-    reset_seed(seed)
+    utils.reset_seed(seed)
     
-    datasets = get_dataset(dataset=args.dataset, seed=seed)
-    if args.dataset == 'yelp':
-        from dataset import YelpPretrainDataset
-        pretrain_dataset_type = YelpPretrainDataset
-        train_df, valid_df, test_df = datasets
-    elif args.dataset == 'clickbait':
-        from dataset import ClickbaitPretrainDataset
-        pretrain_dataset_type = ClickbaitPretrainDataset
-        train_df, valid_df, test_df = datasets
-    elif args.dataset == 'adult':
-        from dataset import AdultPretrainDataset
-        pretrain_dataset_type = AdultPretrainDataset
-        number_train_df, dummy_train_df, number_valid_df, dummy_valid_df, number_test_df, dummy_test_df = datasets
-    else:
-        assert(0)
-        
-    if args.dataset in ['yelp', 'clickbait']:
-        train_y_ = train_df['label']
-        with open(f'./save_dir/atom_pool_{args.dataset}_num_atoms_{args.num_atoms}.pkl', 'rb') as f:
-            ap = pickle.load(f)
-            
-    elif args.dataset in ['adult']:
-        train_y_ = number_train_df['income']
-        with open(f'./save_dir/atom_pool_{args.dataset}.pkl', 'rb') as f:
-            ap = pickle.load(f)
-        
-    n_atom = ap.num_atoms()
+    if 'consequent_estimators' not in os.listdir(f'./{args.save_dir}'):
+        os.system(f'mkdir ./{args.save_dir}/consequent_estimators')
     
-    if args.min_df == 0:
-        tm_2_satis = None
-        tm_3_satis = None
-        tm_4_satis = None
+    ce_path = f'ce_{args.base}_dataset_{args.dataset}_pretrain_samples_{args.pretrain_samples}'
+    if dtype == 'nlp':
+        ce_path += f'_num_atoms_{args.num_atoms}'
+        
+    dir_path = f'./{args.save_dir}/consequent_estimators/{ce_path}'
+    class_names = ds.get_class_names(args.dataset)
+    
+    print("Loading atom_pool")
+    if dtype == 'nlp':
+        with open(f'./{args.save_dir}/atom_pool/atom_pool_{args.dataset}_num_atoms_{args.num_atoms}.pkl', 'rb') as f:
+            ap = pickle.load(f)
+    elif dtype == 'tab':
+        with open(f'./{args.save_dir}/atom_pool/atom_pool_{args.dataset}.pkl', 'rb') as f:
+            ap = pickle.load(f)
     else:
-        if args.dataset in ['yelp', 'mnli', 'clickbait']:
-            with open(f'./save_dir/tm_2_satis_dataset_{args.dataset}_num_atoms_{args.num_atoms}_min_df_{args.min_df}.pkl', 'rb') as f:
-                tm_2_satis = pickle.load(f)
-
-            with open(f'./save_dir/tm_3_satis_dataset_{args.dataset}_num_atoms_{args.num_atoms}_min_df_{args.min_df}.pkl', 'rb') as f:
-                tm_3_satis = pickle.load(f)
-
-            with open(f'./save_dir/tm_4_satis_dataset_{args.dataset}_num_atoms_{args.num_atoms}_min_df_{args.min_df}.pkl', 'rb') as f:
-                tm_4_satis = pickle.load(f)
-        else:
-            with open(f'./save_dir/tm_2_satis_dataset_{args.dataset}_min_df_{args.min_df}.pkl', 'rb') as f:
-                tm_2_satis = pickle.load(f)
-
-            with open(f'./save_dir/tm_3_satis_dataset_{args.dataset}_min_df_{args.min_df}.pkl', 'rb') as f:
-                tm_3_satis = pickle.load(f)
-
-            with open(f'./save_dir/tm_4_satis_dataset_{args.dataset}_min_df_{args.min_df}.pkl', 'rb') as f:
-                tm_4_satis = pickle.load(f)
-        
-        print(len(tm_2_satis), len(tm_3_satis), len(tm_4_satis))
-        
+        raise NotImplementedError("We only support NLP and tabular dataset now.")
+    
     # Whether each train sample satisfies each atom
-    true_matrix = get_true_matrix(ap)
+    print("Loading true_matrix")
+    true_matrix = at.get_true_matrix(ap)
     norm_true_matrix = true_matrix / (torch.sum(true_matrix, dim=1).unsqueeze(dim=1) + 1e-8)
 
     # Embedding from the base model for each train sample
-    data_embedding = torch.load(f'./save_dir/base_models/base_{args.base_model}_dataset_{args.dataset}/train_embeddings.pt')
-    n_data, hidden_dim = data_embedding.shape
-    
+    print("Loading base_embedding")
+    base_embedding_path = f'./{args.save_dir}/base_models/base_{args.base}_dataset_{args.dataset}/train_embeddings.pt'
+    base_embedding = torch.load(base_embedding_path)
+    n_data, hidden_dim = base_embedding.shape
+
     # Obtain atom embedding
-    atom_embedding = torch.mm(norm_true_matrix.to(gpu), data_embedding.to(gpu)).detach()
+    atom_embedding = torch.mm(norm_true_matrix.to(gpu), base_embedding.to(gpu)).detach()
     
-    TARGET_PATH = f'ce_{args.base_model}_dataset_{args.dataset}_pretrain_samples_{args.pretrain_samples}'
-    if args.base_model in ['bert', 'roberta']:
-        TARGET_PATH += f'_num_atoms_{args.num_atoms}'
-        
-    if 'consequent_estimators' not in os.listdir('./save_dir'):
-        os.system(f'mkdir ./save_dir/consequent_estimators')
-        
-    DIR_PATH = f'./save_dir/consequent_estimators/{TARGET_PATH}'
-    if TARGET_PATH not in os.listdir('./save_dir/consequent_estimators'):
-        os.system(f'mkdir {DIR_PATH}')
-        
-    sampling_start = time.time()
-    CREATE = True
-    
-    n_sample_dict = {}
-    n_sample_dict[1] = min(args.pretrain_samples, n_atom)
-    n_sample_dict[2] = min(args.pretrain_samples, len(tm_2_satis))
-    n_sample_dict[3] = min(args.pretrain_samples, len(tm_3_satis))
-    n_sample_dict[4] = min(args.pretrain_samples, len(tm_4_satis))
-    
-    candidate_list = [None, tm_2_satis, tm_3_satis, tm_4_satis]
-    pretrain_dataset_dict = {}
-    for i in range(1, args.max_rule_len + 1):
-        pretrain_dataset = get_pretrain_dataset(
-            n_sample_dict[i],
-            i,
-            true_matrix,
-            train_y_,
-            candidate = candidate_list[i - 1],
-            create=CREATE,
-            dir_path=DIR_PATH,
-            args=args,
-        )
-        pretrain_dataset_dict[i] = pretrain_dataset
-    
-    sampling_end = time.time()
-    
-    # Create dataloaders
-    pretrain_train_dataloader_dict = {}
-    pretrain_test_dataloader_dict = {}
-    weight_mu_dict = {}
-    weight_sigma_dict = {}
-    weight_coverage_dict = {}
-    
-    for i in range(1, args.max_rule_len + 1):
-        pretrain_train_dataloader, pretrain_test_dataloader = create_pretrain_dataloader(pretrain_dataset_dict[i])
-        pretrain_train_dataloader_dict[i] = pretrain_train_dataloader
-        pretrain_test_dataloader_dict[i] = pretrain_test_dataloader
-    
-        weight_mu, weight_sigma, weight_coverage = get_weight(pretrain_dataset_dict[i], n_data, args.dataset)
-        weight_mu_dict[i] = weight_mu
-        weight_sigma_dict[i] = weight_sigma
-        weight_coverage_dict[i] = weight_coverage
-    
-    class_names = get_class_names(args.dataset)
-    
-    ce_model = ConsequentEstimator(
+    ce_model = net.ConsequentEstimator(
         n_class=len(class_names),
         hidden_dim=hidden_dim,
         atom_embedding=atom_embedding,
-        args=args,
     ).to(gpu)
     
-    training_start = time.time()
-    
     model_pretrain_dict = {}
-    
-    for i in range(1, args.max_rule_len + 1):
-        model_pretrain = get_pretrained_model(
-            ce_model,
-            pretrain_train_dataloader_dict[i],
-            i,
-            atom_embedding,
-            n_data,
-            weight_mu_dict[i],
-            weight_sigma_dict[i],
-            weight_coverage_dict[i],
-            create=CREATE,
-            dir_path=DIR_PATH,
-            args=args,
-        )
-        model_pretrain_dict[i] = copy.deepcopy(model_pretrain)
+    if args.only_eval:
+        with open(f'{dir_path}/test_dataloader_dict', 'rb') as f:
+            test_dataloader_dict = pickle.load(f)
         
-    training_end = time.time()
-    
-    print(f'Sampling: {sampling_end - sampling_start}')
-    print(f'Training: {training_end - training_start}')
+        for i in range(1, args.max_rule_len + 1):
+            print(f"Loading consequent estimator for length {i} antecedents")
+            ce_model.load_state_dict(torch.load(f'{dir_path}/ce_pretrain_{i}_{args.base}_dataset_{args.dataset}.pt'), strict=True)
+            model_pretrain_dict[i] = copy.deepcopy(ce_model)
+            
+    else:
+        if ce_path not in os.listdir(f'./{args.save_dir}/consequent_estimators'):
+            os.system(f'mkdir {dir_path}')
 
-    with open(f'{DIR_PATH}/ce_pretrain_eval', 'w') as feval:
-        for i, dl in pretrain_test_dataloader_dict.items():
-            for j, pm in model_pretrain_dict.items():
-                avg_mu_err, avg_sigma_err, avg_coverage_err, f1 = eval_pretrain(
-                    pm, dl, atom_embedding, n_data, class_names, args
-                )
-                print(f'Dataloader {i}, Pretrained Model {j}', file=feval, flush=True)
-                print(f'Avg Mu Err: {avg_mu_err:.4f}, Avg Coverage Err: {avg_coverage_err:.4f}, F1 Score: {f1:.4f}', file=feval, flush=True)
+        # Create datasets
+        train_df, valid_df, test_df = ds.load_data(dataset=args.dataset)
+        label_column = ds.get_label_column(args.dataset)
+        train_y = torch.tensor(train_df[label_column]).float()
+
+        n_atom = ap.num_atoms()
+
+        print("Loading sampled antecedents")
+        cand_dict = {}
+        for i in range(1, args.max_rule_len + 1):
+            if args.min_df == 0:
+                cand_dict[i] = None
+            else:
+                if i == 1:
+                    candidate = [(j,) for j in range(n_atom)]
+                else:
+                    tm_path = f'./{args.save_dir}/tm_satis/tm_{i}_satis'
+                    tm_path += f'_dataset_{args.dataset}'
+                    if dtype == 'nlp':
+                        tm_path += f'_num_atoms_{args.num_atoms}'
+                    tm_path += f'_min_df_{args.min_df}'
+                    tm_path += f'.pkl'
+
+                    with open(tm_path, 'rb') as f:
+                        candidate = pickle.load(f)
+
+                cand_dict[i] = torch.tensor(candidate)
+        
+        sampling_start = time.time()
+
+        pretrain_dataset_dict = {}
+    
+        print()
+        for i in range(1, args.max_rule_len + 1):
+            print(f"Creating datasets for antecedent length {i} antecedents")
+            n_sample = min(args.pretrain_samples, len(cand_dict[i]))
+            pretrain_dataset = ds.create_pretrain_dataset(
+                candidate=cand_dict[i].to(gpu),
+                true_matrix=true_matrix.to(gpu),
+                train_y=train_y.to(gpu),
+                dataset=args.dataset,
+                n_sample=n_sample,
+                num_classes=len(class_names),
+                min_df=args.min_df,
+                max_df=args.max_df,
+            )
+            pretrain_dataset_dict[i] = pretrain_dataset
+
+        sampling_end = time.time()
+        
+        with open(f'{dir_path}/pretrain_dataset_dict', 'wb') as f:
+            pickle.dump(pretrain_dataset_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        # Create dataloaders
+        train_dataloader_dict = {}
+        test_dataloader_dict = {}
+        weight_mu_dict = {}
+        weight_sigma_dict = {}
+        weight_coverage_dict = {}
+
+        print()
+        print(f"Creating dataloaders")
+        for i in range(1, args.max_rule_len + 1):
+            train_dataloader, test_dataloader = ds.create_pretrain_dataloader(
+                pretrain_dataset=pretrain_dataset_dict[i],
+                batch_size=args.batch_size,
+                num_workers=args.num_workers,
+                seed=args.seed,
+            )
+            train_dataloader_dict[i] = train_dataloader
+            test_dataloader_dict[i] = test_dataloader
+    
+        with open(f'{dir_path}/train_dataloader_dict', 'wb') as f:
+            pickle.dump(train_dataloader_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(f'{dir_path}/test_dataloader_dict', 'wb') as f:
+            pickle.dump(test_dataloader_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
+    
+        print()
+        print(f"Creating weights")
+        for i in range(1, args.max_rule_len + 1):
+            weight_mu, weight_sigma, weight_coverage = ds.get_weight(
+                pretrain_dataset_dict[i],
+                n_data
+            )
+            weight_mu_dict[i] = weight_mu
+            weight_sigma_dict[i] = weight_sigma
+            weight_coverage_dict[i] = weight_coverage
+
+        training_start = time.time()
+        
+        for i in range(1, args.max_rule_len + 1):
+            print()
+            print(f"Pretraining consequent estimator for length {i} antecedents")
+            ce_model = te.pretrain(
+                ce_model=ce_model,
+                train_dataloader=train_dataloader_dict[i],
+                learning_rate=args.learning_rate,
+                weight_decay=args.weight_decay,
+                epochs=args.epochs,
+                max_rule_len=args.max_rule_len,
+                n_data=n_data,
+                weight_mu=weight_mu_dict[i],
+                weight_sigma=weight_sigma_dict[i],
+                weight_coverage=weight_coverage_dict[i],
+                gpu=gpu
+            )
+            torch.save(ce_model.state_dict(), f'{dir_path}/ce_pretrain_{i}_{args.base}_dataset_{args.dataset}.pt')
+
+            model_pretrain_dict[i] = copy.deepcopy(ce_model)
+
+        training_end = time.time()
+        print(f'Sampling: {sampling_end - sampling_start}')
+        print(f'Training: {training_end - training_start}')
+    
+    # Evaluation
+    result_table = PrettyTable()
+    result_table.field_names = ["Model"] + [f"Length {i} Test" for i in range(1, args.max_rule_len + 1)]
+    for i, pm in model_pretrain_dict.items():
+        row = [f'Length {i} Pretraining']
+        for j, dl in test_dataloader_dict.items():
+            avg_mu_err, avg_sigma_err, avg_coverage_err, f1 = te.eval_pretrain(
+                pm,
+                dl,
+                n_data,
+                class_names,
+                gpu
+            )
+            row.append(round(f1, 4))
+        result_table.add_row(row)
+    
+    with open(f'{dir_path}/ce_pretrain_eval', 'w') as feval:
+        print(result_table, file=feval, flush=True)

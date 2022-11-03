@@ -85,48 +85,29 @@ class ConsequentEstimator(nn.Module):
         n_class=2,
         hidden_dim=768,
         atom_embedding=None,
-        args=None,
     ):
         super(ConsequentEstimator, self).__init__()
-        self.args = args
         self.n_class = n_class
-        self.dataset = args.dataset
         encoder_layer = nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=8, batch_first=True)
         self.cp_te = nn.TransformerEncoder(encoder_layer, num_layers=6)
+        self.atom_embedding=atom_embedding
 
-        if self.dataset=='yelp':
-            self.mu_head = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, 1)
-            )
-        else:
-            self.mu_head = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, n_class)
-            )
-            
-        if self.dataset=='yelp':
-            self.sigma_head = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, 1)
-            )
-        else:
-            self.sigma_head = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, n_class)
-            )
+        self.mu_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, n_class)
+        )
+
+
+        self.sigma_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, n_class)
+        )
             
         self.coverage_head = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
@@ -138,16 +119,13 @@ class ConsequentEstimator(nn.Module):
         
     def forward(
         self,
-        e,
+        x,
     ):
+        e = self.atom_embedding[x, :]
         out = self.cp_te(e)
         out = torch.mean(out, dim=1)
 
-        if self.dataset=='yelp':
-            mu = torch.sigmoid(self.mu_head(out).squeeze(dim=-1))
-        else:
-            mu = F.softmax(self.mu_head(out), dim=-1)
-            
+        mu = F.softmax(self.mu_head(out), dim=-1)
         sigma = torch.exp(self.sigma_head(out).squeeze(dim=-1))
         coverage = torch.sigmoid(self.coverage_head(out).squeeze(dim=-1))
         
