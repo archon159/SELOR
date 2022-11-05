@@ -26,15 +26,11 @@ Adult (UCI Machine Learning Repository)
 ## Training
 Train the base model with the following command.
 ```
-python3 base.py --dataset <DATASET> --base_model <BASE_MODEL> --gpu <GPU>
+python3 base.py --dataset <DATASET> --base <BASE_MODEL> --gpu <GPU>
 ```
-Update the latest base model with the following command.
+Extract the embedding of base model for train instances with the following command.
 ```
-python3 update_latest_base_model.py --dataset <DATASET> --base_model <BASE_MODEL>
-```
-Extract the embedding of train instances with the following command.
-```
-python3 extract_train_embedding.py --dataset <DATASET> --base_model <BASE_MODEL> --gpu <GPU>
+python3 extract_base_embedding.py --dataset <DATASET> --base <BASE_MODEL> --gpu <GPU>
 ```
 Build the atom pool with the following command.
 ```

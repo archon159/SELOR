@@ -73,7 +73,7 @@ def get_all_explanation(
             atom_tokenizer=atom_tokenizer,
         )
         
-        class_probs, rules, coverage_list = te.get_explanation(
+        class_probs, antecedents, coverage_list = te.get_explanation(
             model,
             atom_pool,
             true_matrix,
@@ -97,10 +97,10 @@ def get_all_explanation(
             exp += f'{k}: {v}\n'
 
         exp += '\n'
-        for i, s in enumerate(rules):
+        for i, s in enumerate(antecedents):
             coverage = coverage_list[i]
 
-            exp += f'Rule {i}: {s}\n'
+            exp += f'Explanation {i}: {s}\n'
             exp += f'Coverage: {coverage:.6f}\n'
             exp += '\n'
 
@@ -109,17 +109,14 @@ def get_all_explanation(
             'Target': target_context,
             'Label': label,
             'Prediction': pred,
-            'Explanation': rules,
+            'Explanation': antecedents,
             'Class Probability': class_probs,
             'Coverage': coverage_list
         }
-#         row = [target_context, label, pred, rules, class_probs, coverage_list]
         
         result_list.append(rd)
         exp_list.append(exp)
-        
-#     result_df = pd.DataFrame(result_df, columns=['Target', 'Label', 'Prediction', 'Explanation', 'Class_Probability', 'Coverage'])
-    
+            
     return exp_list, result_list
 
 if __name__ == "__main__":
@@ -148,7 +145,7 @@ if __name__ == "__main__":
     elif args.dataset in ['adult']:
         atom_tokenizer = None
 
-        with open(f'./save_dir/atom_pool/atom_pool_{args.dataset}.pkl', 'rb') as f:
+        with open(f'./{args.save_dir}/atom_pool/atom_pool_{args.dataset}.pkl', 'rb') as f:
             ap = pickle.load(f)
         
     # Create datasets
@@ -195,7 +192,7 @@ if __name__ == "__main__":
     norm_true_matrix = true_matrix / (torch.sum(true_matrix, dim=1).unsqueeze(dim=1) + 1e-8)
 
     # Embedding from the base model for each train sample
-    data_embedding = torch.load(f'./save_dir/base_models/base_{args.base}_dataset_{args.dataset}/train_embeddings.pt')
+    data_embedding = torch.load(f'./{args.save_dir}/base_models/base_{args.base}_dataset_{args.dataset}/train_embeddings.pt')
         
     # Obtain atom embedding
     atom_embedding = torch.mm(norm_true_matrix.to(gpu), data_embedding.to(gpu)).detach()
@@ -219,10 +216,10 @@ if __name__ == "__main__":
     for p in ce_model.parameters():
         p.requires_grad=False
         
-    model = net.RuleGenerator(
+    model = net.AntecedentGenerator(
         dataset=args.dataset,
         base=args.base,
-        rule_len=args.max_rule_len,
+        antecedent_len=args.antecedent_len,
         head=1,
         num_atoms=ap.num_atoms(),
         input_dim=input_dim,
@@ -242,7 +239,7 @@ if __name__ == "__main__":
     nll_loss_func = nn.NLLLoss(reduction='mean').to(gpu)
     
     dir_prefix = f'{RUN}_{args.base}_dataset_{args.dataset}'
-    dir_prefix += f'_max_rule_len_{args.max_rule_len}'
+    dir_prefix += f'_antecedent_len_{args.antecedent_len}'
     dir_prefix += f'_pretrain_samples_{args.pretrain_samples}'
     if dtype == 'nlp':
         dir_prefix += f'_num_atoms_{args.num_atoms}'
@@ -307,7 +304,6 @@ if __name__ == "__main__":
     )
     
     exp_path = f'{dir_path}/model_explanation.json'
-#     result_df.to_csv(exp_path, index=False)
 
     with open(exp_path, "w") as f:
         json.dump(result_list, f)

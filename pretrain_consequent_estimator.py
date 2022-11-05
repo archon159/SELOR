@@ -72,7 +72,7 @@ if __name__ == "__main__":
         with open(f'{dir_path}/test_dataloader_dict', 'rb') as f:
             test_dataloader_dict = pickle.load(f)
         
-        for i in range(1, args.max_rule_len + 1):
+        for i in range(1, args.antecedent_len + 1):
             print(f"Loading consequent estimator for length {i} antecedents")
             ce_model.load_state_dict(torch.load(f'{dir_path}/ce_pretrain_{i}_{args.base}_dataset_{args.dataset}.pt'), strict=True)
             model_pretrain_dict[i] = copy.deepcopy(ce_model)
@@ -90,7 +90,7 @@ if __name__ == "__main__":
 
         print("Loading sampled antecedents")
         cand_dict = {}
-        for i in range(1, args.max_rule_len + 1):
+        for i in range(1, args.antecedent_len + 1):
             if args.min_df == 0:
                 cand_dict[i] = None
             else:
@@ -114,7 +114,7 @@ if __name__ == "__main__":
         pretrain_dataset_dict = {}
     
         print()
-        for i in range(1, args.max_rule_len + 1):
+        for i in range(1, args.antecedent_len + 1):
             print(f"Creating datasets for antecedent length {i} antecedents")
             n_sample = min(args.pretrain_samples, len(cand_dict[i]))
             pretrain_dataset = ds.create_pretrain_dataset(
@@ -143,7 +143,7 @@ if __name__ == "__main__":
 
         print()
         print(f"Creating dataloaders")
-        for i in range(1, args.max_rule_len + 1):
+        for i in range(1, args.antecedent_len + 1):
             train_dataloader, test_dataloader = ds.create_pretrain_dataloader(
                 pretrain_dataset=pretrain_dataset_dict[i],
                 batch_size=args.batch_size,
@@ -160,7 +160,7 @@ if __name__ == "__main__":
     
         print()
         print(f"Creating weights")
-        for i in range(1, args.max_rule_len + 1):
+        for i in range(1, args.antecedent_len + 1):
             weight_mu, weight_sigma, weight_coverage = ds.get_weight(
                 pretrain_dataset_dict[i],
                 n_data
@@ -171,7 +171,7 @@ if __name__ == "__main__":
 
         training_start = time.time()
         
-        for i in range(1, args.max_rule_len + 1):
+        for i in range(1, args.antecedent_len + 1):
             print()
             print(f"Pretraining consequent estimator for length {i} antecedents")
             ce_model = te.pretrain(
@@ -180,7 +180,7 @@ if __name__ == "__main__":
                 learning_rate=args.learning_rate,
                 weight_decay=args.weight_decay,
                 epochs=args.epochs,
-                max_rule_len=args.max_rule_len,
+                antecedent_len=args.antecedent_len,
                 n_data=n_data,
                 weight_mu=weight_mu_dict[i],
                 weight_sigma=weight_sigma_dict[i],
@@ -197,13 +197,14 @@ if __name__ == "__main__":
     
     # Evaluation
     result_table = PrettyTable()
-    result_table.field_names = ["Model"] + [f"Length {i} Test" for i in range(1, args.max_rule_len + 1)]
+    result_table.field_names = ["Model"] + [f"Length {i} Test" for i in range(1, args.antecedent_len + 1)]
     for i, pm in model_pretrain_dict.items():
         row = [f'Length {i} Pretraining']
         for j, dl in test_dataloader_dict.items():
             avg_mu_err, avg_sigma_err, avg_coverage_err, f1 = te.eval_pretrain(
                 pm,
                 dl,
+                args.antecedent_len,
                 n_data,
                 class_names,
                 gpu

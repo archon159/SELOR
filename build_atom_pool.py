@@ -152,7 +152,6 @@ if __name__ == "__main__":
             train_x,
             train_y,
             dataset=args.dataset,
-#             cat_map=cat_map
         )
         
         ap.add_atom(

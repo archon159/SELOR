@@ -135,7 +135,7 @@ class AtomSelector(nn.Module):
     def __init__(
         self,
         num_atoms=154,
-        rule_len=2,
+        antecedent_len=2,
         hidden_dim=768,
         ae=None,
     ):
@@ -147,7 +147,7 @@ class AtomSelector(nn.Module):
         self.dropout = nn.Dropout(0.1)
         self.gru_head = nn.Linear(hidden_dim, num_atoms)
         
-        self.rule_len = rule_len
+        self.antecedent_len = antecedent_len
         self.ae = ae
         self.zero_v = None
     
@@ -179,7 +179,7 @@ class AtomSelector(nn.Module):
             self.zero_v = torch.zeros(x_.shape).to(x_.device).long().detach()
         
         max_index = None
-        for j in range(self.rule_len):
+        for j in range(self.antecedent_len):
             if cur_h_0 != None:
                 _, h_n = self.gru(cur_input, cur_h_0)
             else:
@@ -208,12 +208,12 @@ class AtomSelector(nn.Module):
         return atom_prob
     
     
-class RuleGenerator(BaseModel):
+class AntecedentGenerator(BaseModel):
     def __init__(
         self,
         dataset='yelp',
         base='bert',
-        rule_len=4,
+        antecedent_len=4,
         head=1,
         num_atoms=5001,
         input_dim=512,
@@ -224,7 +224,7 @@ class RuleGenerator(BaseModel):
         consequent_estimator=None,
         tf_model=None,
     ):
-        super(RuleGenerator, self).__init__(
+        super(AntecedentGenerator, self).__init__(
             dataset=dataset,
             base=base,
             input_dim=input_dim,
@@ -235,11 +235,10 @@ class RuleGenerator(BaseModel):
         
         self.model_name = 'selor'
         self.ae = nn.Embedding(num_atoms, hidden_dim, _weight=atom_embedding)
-#         self.args = args
         self.rs_list = nn.ModuleList([
             AtomSelector(
                 num_atoms=num_atoms,
-                rule_len=rule_len,
+                antecedent_len=antecedent_len,
                 hidden_dim=hidden_dim,
                 ae=self.ae,
             ) for i in range(head)
@@ -247,7 +246,7 @@ class RuleGenerator(BaseModel):
         
         self.tf_model = tf_model
         self.head = head
-        self.rule_len = rule_len
+        self.antecedent_len = antecedent_len
         
         if consequent_estimator == None:
             self.consequent_estimator = None

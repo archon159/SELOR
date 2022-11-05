@@ -436,7 +436,6 @@ class YelpDataset(Dataset):
             
         
         y = self.y[i]
-#         y = torch.Tensor([y]).long()
         
         return (input_ids, attention_mask, x_), y
         
@@ -681,7 +680,7 @@ class PretrainDataset(Dataset):
         max_df=0.95,
     ):
         self.n_atom, self.n_data = tm.shape
-        self.n_candidate, self.rule_length = candidate.shape
+        self.n_candidate, self.antecedent_len = candidate.shape
         self.num_classes = num_classes
         
         self.x = []
@@ -690,7 +689,7 @@ class PretrainDataset(Dataset):
         self.n = []
         
         with torch.no_grad():
-            if self.rule_length == 1:
+            if self.antecedent_len == 1:
                 self.x = candidate
                 self.mu, self.sigma, self.n = self.__get_answer__(
                     candidate,
@@ -765,10 +764,10 @@ class PretrainDataset(Dataset):
     ):
         bsz, _ = c.shape
         target = torch.index_select(tm, 0, c.flatten()) 
-        target = target.reshape(bsz, self.rule_length, self.n_data)
+        target = target.reshape(bsz, self.antecedent_len, self.n_data)
 
         satis_num = torch.sum(target, dim=1)
-        satis_mask = (satis_num == self.rule_length)
+        satis_mask = (satis_num == self.antecedent_len)
         
         n = torch.sum(satis_mask, dim=1)
 

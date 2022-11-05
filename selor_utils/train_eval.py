@@ -44,7 +44,7 @@ def pretrain(
     learning_rate,
     weight_decay,
     epochs,
-    max_rule_len,
+    max_antecedent_len,
     n_data,
     weight_mu,
     weight_sigma,
@@ -71,9 +71,9 @@ def pretrain(
             x, mu, sigma, n = d
             bsz = len(x)
 
-            batch_size, rule_len = x.shape
-            # We pad dummy if the rule length is smaller than max_rule_len
-            x = F.pad(x, (0, max_rule_len - rule_len)).to(gpu)
+            batch_size, antecedent_len = x.shape
+            # We pad dummy if the antecedent length is smaller than antecedent_len
+            x = F.pad(x, (0, max_antecedent_len - antecedent_len)).to(gpu)
             x = F.one_hot(x, n_atom).float()
             
             mu = mu.to(gpu)
@@ -107,13 +107,11 @@ def pretrain(
 def eval_pretrain(
     ce_model,
     test_dataloader,
-#     atom_embedding,
+    max_antecedent_len,
     n_data,
     class_names,
-#     args,
     gpu,
 ):
-#     gpu = torch.device(f'cuda:{args.gpu}')
     n_atom, hidden_dim = ce_model.atom_embedding.shape
     ce_model.eval()
     
@@ -128,8 +126,8 @@ def eval_pretrain(
         x, mu, sigma, n = d
         coverage = n / n_data
 
-        batch_size, rule_len = x.shape
-        x = F.pad(x, (0, 4 - rule_len)).to(gpu)
+        batch_size, antecedent_len = x.shape
+        x = F.pad(x, (0, max_antecedent_len - antecedent_len)).to(gpu)
         x = F.one_hot(x, n_atom).float()
 
         with torch.no_grad():
@@ -196,7 +194,6 @@ def train_epoch(
 
         pbar.update(1)
         pbar.set_description(f'Train Loss: {train_loss.avg:.3f}')
-        # break
         
     pbar.close()
 
@@ -239,7 +236,6 @@ def eval_epoch(
             
             pbar.update(1)
             pbar.set_description(f'Valid Loss: {valid_loss.avg:.3f}')
-            # break
 
         pbar.close()
         predictions = torch.stack(predictions).cpu().tolist()
@@ -388,15 +384,15 @@ def eval_model(
                 consistency = (torch.sum(cs, dim=-1) == num_head).float()
 
                 ind_list = torch.stack(ind_list, dim=1)
-                _, num_head, rule_length = ind_list.shape
-                ind_list = ind_list.view(batch_size, num_head * rule_length)
+                _, num_head, max_antecedent_len = ind_list.shape
+                ind_list = ind_list.view(batch_size, num_head * max_antecedent_len)
 
                 # Calculate the number of unique atoms
                 unique = []
                 for i in ind_list:
                     unique.append(len(set(i.tolist())))
                     
-                # Calculate the length of rule
+                # Calculate the length of antecedent
                 length = torch.sum((ind_list != 0), dim=1)
 
                 # Calculate the number of duplicated atoms
@@ -404,11 +400,11 @@ def eval_model(
                 check = ind_list==token.unsqueeze(dim=-1)
                 duplicate = torch.sum(check, dim=-1)
                 
-                # Calculate the coverage of the rule
-                mat_rule_prob = torch.stack(atom_prob_list, dim=1)
-                cover_rule_prob = torch.sum(mat_rule_prob, dim=2)
-                cover_rule_prob = torch.matmul(cover_rule_prob, true_matrix)
-                mat_satis = (cover_rule_prob == rule_length)
+                # Calculate the coverage of the antecedent
+                mat_antecedent_prob = torch.stack(atom_prob_list, dim=1)
+                cover_antecedent_prob = torch.sum(mat_antecedent_prob, dim=2)
+                cover_antecedent_prob = torch.matmul(cover_antecedent_prob, true_matrix)
+                mat_satis = (cover_antecedent_prob == max_antecedent_len)
                 mat_satis = torch.sum(mat_satis.float(), dim=-1)
                 mat_coverage = mat_satis / n_data
                 coverage = torch.mean(mat_coverage, dim=-1)
@@ -458,7 +454,7 @@ def eval_model(
             eval_log.write(f'Unique: {uniques.avg:.4f}')
             eval_log.write(f'Coverage: {coverages.avg:.4f}')
             eval_log.write(f'Length')
-            for i in range(rule_length + 1):
+            for i in range(max_antecedent_len + 1):
                 if i in dist_length:
                     eval_log.write(f'{i}: {dist_length[i]:.4f}')
         
@@ -506,9 +502,9 @@ def get_explanation(
             atom_list.append(atoms)
             rp_list.append(rp.item())
 
-            cover_rule_prob = torch.sum(atom_prob, dim=1)
-            cover_rule_prob = torch.matmul(cover_rule_prob, true_matrix)
-            mat_satis = (cover_rule_prob == model.rule_len)
+            cover_antecedent_prob = torch.sum(atom_prob, dim=1)
+            cover_antecedent_prob = torch.matmul(cover_antecedent_prob, true_matrix)
+            mat_satis = (cover_antecedent_prob == model.antecedent_len)
             mat_satis = torch.sum(mat_satis.float(), dim=-1)
             coverage = mat_satis / model.n_data
             coverage_list.append(round(coverage.item(), 6))
@@ -517,12 +513,12 @@ def get_explanation(
         for i in range(len(outputs)):
             class_probs[f'{class_names[i]}'] = round(outputs[i].item(), 4)
 
-        rules = []
+        antecedents = []
         for r in atom_list:
             s = ' & '.join([c.display_str for c in r])
-            rules.append(s)
+            antecedents.append(s)
             
-        return class_probs, rules, coverage_list
+        return class_probs, antecedents, coverage_list
         
 def get_base_embedding(
     model,
