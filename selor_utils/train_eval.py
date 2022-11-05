@@ -74,7 +74,8 @@ def pretrain(
             batch_size, rule_len = x.shape
             # We pad dummy if the rule length is smaller than max_rule_len
             x = F.pad(x, (0, max_rule_len - rule_len)).to(gpu)
-
+            x = F.one_hot(x, n_atom).float()
+            
             mu = mu.to(gpu)
             sigma = sigma.to(gpu)
             coverage = (n / n_data).to(gpu)
@@ -128,7 +129,8 @@ def eval_pretrain(
         coverage = n / n_data
 
         batch_size, rule_len = x.shape
-        x = F.pad(x, (0, 4 - rule_len))
+        x = F.pad(x, (0, 4 - rule_len)).to(gpu)
+        x = F.one_hot(x, n_atom).float()
 
         with torch.no_grad():
             mu_, sigma_, coverage_ = ce_model(x)
@@ -332,6 +334,8 @@ def eval_model(
     eval_path = f'{dir_path}/model_eval'
     eval_log = Log(eval_path)
     
+    n_atom, n_data = true_matrix.shape
+    
     pbar = tqdm(test_dataloader)
     model.eval()
     with torch.no_grad():
@@ -401,8 +405,6 @@ def eval_model(
                 duplicate = torch.sum(check, dim=-1)
                 
                 # Calculate the coverage of the rule
-                print(true_matrix.shape)
-                assert(0)
                 mat_rule_prob = torch.stack(atom_prob_list, dim=1)
                 cover_rule_prob = torch.sum(mat_rule_prob, dim=2)
                 cover_rule_prob = torch.matmul(cover_rule_prob, true_matrix)
@@ -464,12 +466,63 @@ def eval_model(
         precision, recall, thresholds = precision_recall_curve(answers, predictions, pos_label=1)
         pr_auc = auc(recall, precision)
         
+        eval_log.write('')
         eval_log.write('Prediction Performance:')
         eval_log.write(classification_report(answers, predictions, target_names=class_names, digits=4))
         eval_log.write(f'ROC-AUC: {roc_auc:.4f}')
         eval_log.write(f'PR-AUC: {pr_auc:.4f}')
         
     eval_log.close()
+    
+def get_explanation(
+    model,
+    atom_pool,
+    true_matrix,
+    inputs,
+    class_names,
+    gpu,
+):
+    model.eval()
+    
+    with torch.no_grad():
+        inputs = [i.to(gpu).unsqueeze(dim=0) for i in inputs]
+        outputs, atom_prob_list, cp_list = model(
+            inputs
+        )
+        outputs = outputs.squeeze(dim=0)
+        outputs = torch.exp(outputs)
+
+        atom_list = []
+        rp_list = []
+        coverage_list = []
+
+        for atom_prob in atom_prob_list:
+            val, ind = torch.max(atom_prob, dim=-1)
+            rp = torch.prod(val, dim=-1)
+            atoms = model.ae(ind)
+
+            ind = ind.squeeze(dim=0)
+            atoms = [atom_pool.atoms[atom_pool.atom_id2key[i]] for i in ind]
+            atom_list.append(atoms)
+            rp_list.append(rp.item())
+
+            cover_rule_prob = torch.sum(atom_prob, dim=1)
+            cover_rule_prob = torch.matmul(cover_rule_prob, true_matrix)
+            mat_satis = (cover_rule_prob == model.rule_len)
+            mat_satis = torch.sum(mat_satis.float(), dim=-1)
+            coverage = mat_satis / model.n_data
+            coverage_list.append(round(coverage.item(), 6))
+            
+        class_probs = {}
+        for i in range(len(outputs)):
+            class_probs[f'{class_names[i]}'] = round(outputs[i].item(), 4)
+
+        rules = []
+        for r in atom_list:
+            s = ' & '.join([c.display_str for c in r])
+            rules.append(s)
+            
+        return class_probs, rules, coverage_list
         
 def get_base_embedding(
     model,

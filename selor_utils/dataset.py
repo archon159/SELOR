@@ -114,6 +114,19 @@ def get_label_column(dataset='yelp'):
         raise NotImplementedError(f'Dataset {dataset} is not supported.')
         
     return label
+
+def get_context_columns(dataset='yelp'):
+    if dataset == 'yelp':
+        cols = ['text']
+    elif dataset == 'clickbait':
+        cols = ['title, text']
+    elif dataset == 'adult':
+        categorical_x_col, numerical_x_col, _ = get_tabular_column_type(dataset)
+        cols = categorical_x_col + numerical_x_col
+    else:
+        raise NotImplementedError(f'Dataset {dataset} is not supported.')
+        
+    return cols
         
 def get_pos_type(
     dataset='yelp'
@@ -293,6 +306,82 @@ def create_dataloader(
         pin_memory=False,
     )
     
+def get_single_input(
+    target,
+    dataset,
+    atom_pool,
+    tf_tokenizer=None,
+    atom_tokenizer=None,
+    max_len=512,
+):
+    assert(atom_pool != None)
+    
+    if dataset in NLP_DATASET:
+        assert(tf_tokenizer != None)
+        assert(atom_tokenizer != None)
+        
+        if dataset == 'yelp':
+            text = target['text']
+            text_pair = None
+
+            text_bow = np.zeros(atom_tokenizer.vocab_size)
+            text_count = Counter(atom_tokenizer.tokenize(target['text']))
+            
+            for k, v in dict(text_count).items():
+                text_bow[k] = v
+                
+            bow = text_bow
+            
+        elif dataset == 'clickbait':
+            text = target['title']
+            text_pair = target['text']
+
+            text_bow = np.zeros(atom_tokenizer.vocab_size)
+            title_bow = np.zeros(atom_tokenizer.vocab_size)
+            
+            text_count = Counter(atom_tokenizer.tokenize(target['text']))
+            title_count = Counter(atom_tokenizer.tokenize(target['title']))
+            
+            for k, v in dict(text_count).items():
+                text_bow[k] = v
+                
+            for k, v in dict(title_count).items():
+                title_bow[k] = v
+                
+            bow = np.concatenate((title_bow, text_bow))
+            
+        encoding = tf_tokenizer.encode_plus(
+            text=text,
+            text_pair=text_pair,
+            add_special_tokens=True,
+            max_length=max_len,
+            return_token_type_ids=False,
+            padding='max_length',
+            return_attention_mask=True,
+            return_tensors='pt',
+            truncation=True,
+        )
+        
+        input_ids = encoding['input_ids']
+        attention_mask = encoding['attention_mask']
+
+        input_ids = input_ids.squeeze(dim=0).long()
+        attention_mask = attention_mask.squeeze(dim=0).long()
+        
+        x_ = atom_pool.check_atoms(bow)
+        x_ = torch.Tensor(x_).long()
+        
+        ret = (input_ids, attention_mask, x_)
+    
+    if dataset in TAB_DATASET:
+        x = torch.tensor(target).float()
+
+        x_ = atom_pool.check_atoms(target)
+        x_ = torch.Tensor(x_).long()
+            
+        ret = (x, x_)
+        
+    return ret
     
 class YelpDataset(Dataset):
     def __init__(
@@ -382,15 +471,15 @@ class ClickbaitDataset(Dataset):
             return_token_type_ids=False,
             padding='max_length',
             return_attention_mask=True,
-            return_tensors='np',
+            return_tensors='pt',
             truncation=True,
         )
 
         input_ids = encoding['input_ids']
         attention_mask = encoding['attention_mask']
 
-        input_ids = torch.tensor(input_ids).squeeze(dim=0).long()
-        attention_mask = torch.tensor(attention_mask).squeeze(dim=0).long()
+        input_ids = input_ids.squeeze(dim=0).long()
+        attention_mask = attention_mask.squeeze(dim=0).long()
         
         if self.ap != None:
             title_ = np.zeros(self.atom_tokenizer.vocab_size)

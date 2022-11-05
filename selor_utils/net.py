@@ -121,7 +121,7 @@ class ConsequentEstimator(nn.Module):
         self,
         x,
     ):
-        e = self.atom_embedding[x, :]
+        e = torch.matmul(x, self.atom_embedding)
         out = self.cp_te(e)
         out = torch.mean(out, dim=1)
 
@@ -204,39 +204,38 @@ class AtomSelector(nn.Module):
             cur_input = cls + atom_wsum.unsqueeze(dim=0)
             
         atom_prob = torch.stack(atom_prob, dim=1)
+         
         return atom_prob
     
     
 class RuleGenerator(BaseModel):
     def __init__(
         self,
+        dataset='yelp',
+        base='bert',
         rule_len=4,
         head=1,
         num_atoms=5001,
         input_dim=512,
         hidden_dim=768,
-        vocab_size=0,
         num_classes=2,
         n_data=56000,
         atom_embedding=None,
         consequent_estimator=None,
-        padding_idx=0,
         tf_model=None,
-        args=None,
     ):
         super(RuleGenerator, self).__init__(
+            dataset=dataset,
+            base=base,
             input_dim=input_dim,
             hidden_dim=hidden_dim,
-            vocab_size=vocab_size,
-            num_classes=num_classes,
-            padding_idx=padding_idx,
             tf_model=tf_model,
-            args=args,
+            num_classes=num_classes,
         )
         
-        self.model_name = 'rule_gen'
+        self.model_name = 'selor'
         self.ae = nn.Embedding(num_atoms, hidden_dim, _weight=atom_embedding)
-        self.args = args
+#         self.args = args
         self.rs_list = nn.ModuleList([
             AtomSelector(
                 num_atoms=num_atoms,
@@ -259,8 +258,8 @@ class RuleGenerator(BaseModel):
         self.num_atoms = num_atoms
         self.n_data = n_data
         
-        self.base = args.base_model
-        self.dataset = args.dataset
+        self.base = base
+        self.dataset = dataset
         
         self.alpha = nn.Parameter(torch.ones(1), requires_grad=True)
         self.zero = nn.Parameter(torch.zeros(1), requires_grad=False)
@@ -271,11 +270,9 @@ class RuleGenerator(BaseModel):
     ):
         if self.base == 'dnn':
             x, x_ = inputs
-            batch_size, _ = x.shape
             h = self.linear_base(x)
         else:
             input_ids, attention_mask, x_ = inputs
-            batch_size, max_len = input_ids.shape
             out = self.tf_model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -292,18 +289,12 @@ class RuleGenerator(BaseModel):
             atom_prob_list.append(atom_prob)
             
             atoms = torch.matmul(atom_prob, self.ae.weight.detach())
-            mu, sigma, coverage = self.consequent_estimator(atoms)
+            mu, sigma, coverage = self.consequent_estimator(atom_prob)
             n = coverage * self.n_data
 
-            if self.consequent_estimator.dataset=='yelp':
-                pp = torch.div((mu + self.alpha * torch.reciprocal(n)), (1 + 2 * self.alpha * torch.reciprocal(n)))
-                cp = torch.stack((1 - pp, pp), dim=-1)
-            else:
-                batch_size, n_class = mu.shape
-                assert(self.n_class == n_class)
-                sf = self.alpha * torch.reciprocal(n)
-                sf = sf.unsqueeze(dim=-1).repeat(1, n_class)
-                cp = torch.div(mu + sf, 1 + 2 * sf)
+            sf = self.alpha * torch.reciprocal(n)
+            sf = sf.unsqueeze(dim=-1).repeat(1, self.n_class)
+            cp = torch.div(mu + sf, 1 + 2 * sf)
                 
             cp_list.append(cp)
 
