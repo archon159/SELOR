@@ -1,9 +1,15 @@
+"""
+The module that contains utility functions
+"""
 import argparse
 import random
 import numpy as np
 import torch
- 
+
 def reset_seed(seed=7):
+    """
+    Reset the random variables with the given seed.
+    """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -11,31 +17,90 @@ def reset_seed(seed=7):
     torch.backends.cudnn.benchmark = False
 
 def parse_arguments(notebook=False):
+    """
+    Parse the arguments
+    """
     parser = argparse.ArgumentParser()
-    parser.add_argument('--seed', type=int, default=7, help='Random seed')
-    parser.add_argument('--gpu', type=int, default=0, help='GPU to use')
-    parser.add_argument('--antecedent_len', type=int, default=4, help='Maximum antecedent length')
-    parser.add_argument('--hidden_dim', type=int, default=512, help='The hidden dimension of DNN base.')
-    parser.add_argument('--learning_rate', type=float, default=1e-5, help='Learning rate')
-    parser.add_argument('--weight_decay', type=float, default=0.0, help='Weight decay')
-    parser.add_argument('--gamma', type=float, default=0.95, help='Gamma for ExponentialLR scheduler')
-    parser.add_argument('--batch_size', type=int, default=16, help='Batch Size')
-    parser.add_argument('--num_workers', type=int, default=8, help='Number of workers for preprocessing')
-    parser.add_argument('--dataset', type=str, default='yelp', help='Dataset')
-    parser.add_argument('--base', type=str, default='bert', help='Base Model')
-    parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
-    parser.add_argument('--num_atoms', type=int, default=5000, help='Number of words to use for atoms, Only for NLP datasets.')
-    parser.add_argument('--min_df', type=int, default=200, help='Minimum data frequency for an antecedent ')
-    parser.add_argument('--max_df', type=float, default=0.95, help='Maximum data frequency for an antecedent')
-    parser.add_argument('--pretrain_samples', type=int, default=10000, help='Number of samples for pretraining of consequent estimator.')
-    parser.add_argument('--only_eval', action='store_true', help='Do only evaluation')
-    parser.add_argument('--result_dir', type=str, default='result', help='The directory name to save results')
-    parser.add_argument('--save_dir', type=str, default='save_dir', help='The directory to save interim files')
-    
+    parser.add_argument(
+        '--seed', type=int, default=7,
+         help='Random seed'
+    )
+    parser.add_argument(
+        '--gpu', type=int, default=0,
+        help='GPU to use'
+    )
+    parser.add_argument(
+        '--antecedent_len', type=int, default=4,
+        help='Maximum antecedent length'
+    )
+    parser.add_argument(
+        '--hidden_dim', type=int, default=512,
+        help='The hidden dimension of DNN base.'
+    )
+    parser.add_argument(
+        '--learning_rate', type=float, default=1e-5,
+        help='Learning rate'
+    )
+    parser.add_argument(
+        '--weight_decay', type=float, default=0.0,
+        help='Weight decay'
+    )
+    parser.add_argument(
+        '--gamma', type=float, default=0.95,
+        help='Gamma for ExponentialLR scheduler'
+    )
+    parser.add_argument(
+        '--batch_size', type=int, default=16,
+        help='Batch Size'
+    )
+    parser.add_argument(
+        '--num_workers', type=int, default=8,
+        help='Number of workers for preprocessing'
+    )
+    parser.add_argument(
+        '--dataset', type=str, default='yelp',
+        help='Dataset'
+    )
+    parser.add_argument(
+        '--base', type=str, default='bert',
+        help='Base Model'
+    )
+    parser.add_argument(
+        '--epochs', type=int, default=10,
+        help='Number of epochs'
+    )
+    parser.add_argument(
+        '--num_atoms', type=int, default=5000,
+        help='Number of words to use for atoms, Only for NLP datasets.'
+    )
+    parser.add_argument(
+        '--min_df', type=int, default=200,
+        help='Minimum data frequency for an antecedent '
+    )
+    parser.add_argument(
+        '--max_df', type=float, default=0.95,
+        help='Maximum data frequency for an antecedent'
+    )
+    parser.add_argument(
+        '--pretrain_samples', type=int, default=10000,
+        help='Number of samples for pretraining of consequent estimator.'
+    )
+    parser.add_argument(
+        '--only_eval', action='store_true',
+        help='Do only evaluation'
+    )
+    parser.add_argument(
+        '--result_dir', type=str, default='result',
+        help='The directory name to save results'
+    )
+    parser.add_argument(
+        '--save_dir', type=str, default='save_dir',
+        help='The directory to save interim files'
+    )
+
     if notebook:
         args = parser.parse_args([])
     else:
         args = parser.parse_args()
-        
-    return args
 
+    return args

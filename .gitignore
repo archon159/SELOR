@@ -1,6 +1,8 @@
 # Custom save directories
-result
-save_dir
+data/
+result/
+save_dir/
+*.ipynb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
