@@ -2,12 +2,14 @@
 The module that contains utility functions and classes related to atoms
 """
 from collections import OrderedDict, defaultdict, Counter
-from typing import List, Dict, Tuple
+from typing import List, Tuple
 import re
 import numpy as np
 from tqdm import tqdm
 import torch
 import pandas as pd
+
+from .utils import check_kwargs
 
 class AtomTokenizer:
     """
@@ -97,37 +99,51 @@ class Atom:
         context: str, # For all kinds of dataset
         bigger: bool, # In categorical case, bigger==True means context == target
         target: str,
-        position: int, # For multiple input dataset
-        n: int,
-        consequent: List[float],
-        atom_idx: int,
-        tokenizer: object=None, # For text
-        cat_map: Dict[str, str]=None, # For categorical
-        col2feature: Dict[str, int]=None, # For categorical or numeric
-        numerical_max: Dict[str, float]=None, # For numerical
-        pos_type: List[str]=None,
+        **kwargs
     ):
+        check_kwargs(
+            ['position', 'n', 'consequent', 'atom_idx', 'pos_type'],
+            kwargs=kwargs
+        )
+
         self.c_type = c_type
-        self.target = target
-        self.consequent = consequent
-        self.n = n
-        self.atom_idx = atom_idx
-        self.position = position
-        self.bigger = bigger
         self.context = context
+        self.bigger = bigger
+        self.target = target
+
+        self.position = kwargs['position']
+        self.n = kwargs['n']
+        self.consequent = kwargs['consequent']
+        self.atom_idx = kwargs['atom_idx']
+        pos_type = kwargs['pos_type']
 
         if c_type == 'dummy':
             self.display_str = '[DUMMY]'
         elif c_type == 'text':
+            check_kwargs(
+                ['tokenizer'],
+                value=True,
+                kwargs=kwargs,
+            )
+            tokenizer = kwargs['tokenizer']
+
             self.word = tokenizer.idx2word[int(context)]
-            self.feature_id = tokenizer.vocab_size * position + context
+            self.feature_id = tokenizer.vocab_size * self.position + context
 
             if bigger:
-                self.display_str = f'({pos_type[position]}) {self.word} >= {target}'
+                self.display_str = f'({pos_type[self.position]}) {self.word} >= {target}'
             else:
-                self.display_str = f'({pos_type[position]}) {self.word} < {target}'
+                self.display_str = f'({pos_type[self.position]}) {self.word} < {target}'
 
         elif c_type == 'categorical':
+            check_kwargs(
+                ['col2feature', 'cat_map'],
+                value=True,
+                kwargs=kwargs,
+            )
+            col2feature = kwargs['col2feature']
+            cat_map = kwargs['cat_map']
+
             self.feature_id = col2feature[(context, target)]
 
             target_word = cat_map[f'{context}_idx2key'][target]
@@ -137,6 +153,14 @@ class Atom:
                 self.display_str = f'{context} != {target_word}'
 
         elif c_type == 'numerical':
+            check_kwargs(
+                ['col2feature', 'numerical_max'],
+                value=True,
+                kwargs=kwargs,
+            )
+            col2feature = kwargs['col2feature']
+            numerical_max = kwargs['numerical_max']
+
             self.feature_id = col2feature[(context, 0)]
             if bigger:
                 self.display_str = f'{context} >= {round(target * numerical_max[context], 1)}'
@@ -171,22 +195,17 @@ class Atom:
         elif self.c_type == 'dummy':
             ret = np.zeros(x_.shape[0])
         else:
-            raise ValueError(f'Context type {c_type} is not supported.')
+            raise ValueError(f'Context type {self.c_type} is not supported.')
 
         return ret.astype(int)
 
-    def display(
-        self,
-    ):
-        """
-        Display the information about this atom
-        """
-        dummy_consequent = [round(p, 4) for p in self.consequent]
+    def __repr__(self):
         disp = f'Atom {self.atom_idx}: {self.display_str}, '
         disp += f'Type: {self.c_type}, '
         disp += f'Basis: {self.n}, '
-        disp += f'Consequent: {dummy_consequent}'
-        print(disp)
+        disp += f'Consequent: {[round(p, 4) for p in self.consequent]}'
+
+        return disp
 
 class AtomPool:
     """
@@ -197,12 +216,14 @@ class AtomPool:
         train_x: np.array,
         train_y: np.array,
         dtype: str='nlp',
-        tokenizer: object=None,
-        tabular_info: Tuple[dict, dict, dict]=None,
-        tabular_column_type: Tuple[list, list, list]=None,
-        pos_type: List[str]=None,
         alpha: int=1,
+        **kwargs,
     ):
+        check_kwargs(
+            ['pos_type'],
+            kwargs=kwargs
+        )
+
         self.train_x = train_x
         self.train_y = train_y
 
@@ -210,24 +231,35 @@ class AtomPool:
         self.n_class = len(set(train_y))
         self.n_data = len(train_x)
 
-        self.pos_type = pos_type
+        self.pos_type = kwargs['pos_type']
 
         self.atom_idx = 0
         self.atoms = OrderedDict()
         self.atom_id2key = []
         self.atom_satis_dict = {}
 
-        self.tokenizer = tokenizer
-
         if dtype == 'nlp':
-            assert tokenizer is not None
+            check_kwargs(
+                ['tokenizer'],
+                value=True,
+                kwargs=kwargs
+            )
+            self.tokenizer = kwargs['tokenizer']
+
             self.cat_map = None
             self.col2feature = None
             self.numerical_max = None
 
         elif dtype == 'tab':
-            self.cat_map, self.numerical_threshold, self.numerical_max = tabular_info
-            self.categorical_x_col, self.numerical_x_col, self.y_col = tabular_column_type
+            check_kwargs(
+                ['tabular_info', 'tabular_column_type'],
+                value=True,
+                kwargs=kwargs
+            )
+
+            self.tokenizer = None
+            self.cat_map, self.numerical_threshold, self.numerical_max = kwargs['tabular_info']
+            self.categorical_x_col, self.numerical_x_col, self.y_col = kwargs['tabular_column_type']
 
             feature_id = 0
             self.col2feature = {}
@@ -246,6 +278,9 @@ class AtomPool:
         else:
             raise ValueError(f'Dataset type {dtype} is not supported.')
 
+    def __repr__(self):
+        return '\n'.join([str(atom) for key, atom in self.atoms.items()])
+
     def add_atom(
         self,
         c_type: str,
@@ -261,6 +296,7 @@ class AtomPool:
 
         if atom_key in self.atoms:
             print(f'Atom {atom_key} already exists.')
+
             return
 
         consequent, n, ids = self.check_atom_consequent(
@@ -380,18 +416,6 @@ class AtomPool:
         Get total number of atoms in this pool.
         """
         return len(self.atoms)
-
-    def display_atoms(
-        self,
-        n_display: int=0,
-    ):
-        """
-        Display info of atoms in this pool.
-        """
-        for i, (_, atom) in enumerate(self.atoms.items()):
-            atom.display()
-            if n_display > 0 and i==n_display:
-                break
 
 def get_true_matrix(
     atom_pool: object

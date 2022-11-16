@@ -64,7 +64,7 @@ if __name__ == "__main__":
     atom_embedding = torch.mm(norm_true_matrix.to(gpu), base_embedding.to(gpu)).detach()
 
     ce_model = net.ConsequentEstimator(
-        n_class=len(class_names),
+        num_classes=len(class_names),
         hidden_dim=hidden_dim,
         atom_embedding=atom_embedding,
     ).to(gpu)

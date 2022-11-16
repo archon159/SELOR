@@ -133,7 +133,7 @@ if __name__ == "__main__":
                 if cur_num_atoms == args.num_atoms:
                     break
 
-        ap.display_atoms(cur_num_atoms)
+        print(ap)
         n_atom = ap.num_atoms()
         print(f'{n_atom} atoms added')
 
@@ -199,7 +199,7 @@ if __name__ == "__main__":
                     target=k
                 )
 
-        ap.display_atoms()
+        print(ap)
         n_atom = ap.num_atoms()
         print(f'{n_atom} atoms added')
 

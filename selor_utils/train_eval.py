@@ -4,7 +4,6 @@ The module that contains utility functions related to model training and evaluat
 import time
 import logging
 from typing import Dict, List, Tuple
-from pathlib import Path
 from collections import Counter
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ExponentialLR
@@ -12,8 +11,12 @@ from tqdm import tqdm
 import torch
 import torch.nn.functional as F
 import pandas as pd
-from .dataset import get_single_input
 from sklearn.metrics import classification_report, roc_auc_score, precision_recall_curve, auc
+
+from .dataset import get_class_names, get_label_column
+from .dataset import get_tabular_column_type, load_tabular_info
+from .dataset import get_single_input, get_single_context
+from .utils import check_kwargs
 
 class AverageMeter:
     """
@@ -40,31 +43,38 @@ class AverageMeter:
 def pretrain(
     ce_model: object,
     train_dataloader: object,
-    learning_rate: float,
-    weight_decay: float,
-    epochs: int,
-    max_antecedent_len: int,
-    n_data: int,
-    w_mu: torch.Tensor,
-    w_sigma: torch.Tensor,
-    w_coverage: torch.Tensor,
-    gpu: torch.device
+    gpu: torch.device,
+    **kwargs
 ) -> object:
     """
     Pretrains the consequent estimator with given train dataloader.
     """
+    check_kwargs(
+        ['n_data', 'w_mu', 'w_sigma', 'w_coverage'],
+        kwargs=kwargs
+    )
+
+    default_kwargs = {
+        'learning_rate': 1e-5,
+        'weight_decay': 0.0,
+        'epochs': 10,
+        'max_antecedent_len': 4,
+    }
+    default_kwargs.update(kwargs)
+    kwargs = default_kwargs
+
     n_atom, _ = ce_model.atom_embedding.shape
 
     optimizer = AdamW(
         ce_model.parameters(),
-        lr=learning_rate,
-        weight_decay=weight_decay
+        lr=kwargs['learning_rate'],
+        weight_decay=kwargs['weight_decay']
     )
     optimizer.zero_grad()
 
     ce_model.train()
 
-    for epoch in range(epochs):
+    for epoch in range(kwargs['epochs']):
         print(f'Epoch {epoch}')
         pbar = tqdm(range(len(train_dataloader)))
 
@@ -77,12 +87,12 @@ def pretrain(
             x, mu, sigma, n = batch
             bsz, antecedent_len = x.shape
             # We pad dummy if the antecedent length is smaller than antecedent_len
-            x = F.pad(x, (0, max_antecedent_len - antecedent_len)).to(gpu)
+            x = F.pad(x, (0, kwargs['max_antecedent_len'] - antecedent_len)).to(gpu)
             x = F.one_hot(x, n_atom).float()
 
             mu = mu.to(gpu)
             sigma = sigma.to(gpu)
-            coverage = (n / n_data).to(gpu)
+            coverage = (n / kwargs['n_data']).to(gpu)
 
             mu_, sigma_, coverage_ = ce_model(x)
 
@@ -106,7 +116,9 @@ def pretrain(
                 )
             )
 
-            loss = w_mu * mu_loss + w_sigma * sigma_loss + w_coverage * coverage_loss
+            loss = kwargs['w_mu'] * mu_loss
+            loss += kwargs['w_sigma'] * sigma_loss
+            loss += kwargs['w_coverage'] * coverage_loss
 
             optimizer.zero_grad()
             loss.backward()
@@ -299,44 +311,60 @@ def train(
     loss_func: object,
     train_dataloader: object,
     valid_dataloader: object,
-    learning_rate: float,
-    weight_decay: float,
-    gamma: float,
-    epochs: int,
     gpu: torch.device,
-    class_names: List[str],
-    dir_path: Path,
+    **kwargs
 ) -> object:
     """
     Train the model and evaluate for entire epochs with given train and valid dataloader.
     """
+    check_kwargs(
+        ['class_names', 'dir_path'],
+        kwargs=kwargs
+    )
+
+    default_kwargs = {
+        'learning_rate': 1e-5,
+        'weight_decay': 0.0,
+        'gamma': 0.95,
+        'epochs': 10,
+        'max_antecedent_len': 4,
+    }
+    default_kwargs.update(kwargs)
+    kwargs = default_kwargs
+
     optimizer = AdamW(
         model.parameters(),
-        lr=learning_rate,
-        weight_decay=weight_decay
+        lr=kwargs['learning_rate'],
+        weight_decay=kwargs['weight_decay']
     )
     optimizer.zero_grad()
 
-    scheduler = ExponentialLR(optimizer, gamma=gamma)
+    scheduler = ExponentialLR(optimizer, gamma=kwargs['gamma'])
 
     min_valid_loss = 100.0
-    best_model_path = dir_path / 'model_best.pt'
+    best_model_path = kwargs['dir_path'] / 'model_best.pt'
 
     train_times = AverageMeter()
     valid_times = AverageMeter()
 
     train_log = logging.getLogger()
     train_log.setLevel(logging.INFO)
-    train_file_handler = logging.FileHandler(str(dir_path / 'log'), mode='w')
+    train_file_handler = logging.FileHandler(str(kwargs['dir_path'] / 'log'), mode='w')
     train_file_handler.setFormatter(logging.Formatter('%(message)s'))
     train_log.addHandler(train_file_handler)
 
     train_log.info('Start Training\n')
-    for epoch in range(epochs):
+    for epoch in range(kwargs['epochs']):
         train_log.info(f'Epoch {epoch}')
 
         train_start = time.time()
-        model, train_loss = train_epoch(optimizer, model, loss_func, train_dataloader, gpu)
+        model, train_loss = train_epoch(
+            optimizer,
+            model,
+            loss_func,
+            train_dataloader,
+            gpu
+        )
         train_end = time.time()
         train_time = train_end - train_start
         train_log.info(f'Training Time: {train_time:.3f} s')
@@ -349,7 +377,7 @@ def train(
             model,
             loss_func,
             valid_dataloader,
-            class_names,
+            kwargs['class_names'],
             gpu
         )
         valid_end = time.time()
@@ -365,12 +393,12 @@ def train(
         train_log.info(f'Valid PR-AUC: {pr_auc:.4f}')
         train_log.info('\n')
 
-        model_path = dir_path / 'model_epoch_{epoch}.pt'
-        torch.save(model.state_dict(), model_path.resolve())
+        model_path = kwargs['dir_path'] / 'model_epoch_{epoch}.pt'
+        torch.save(model.state_dict(), str(model_path))
 
         if valid_loss.avg < min_valid_loss:
             min_valid_loss = valid_loss.avg
-            torch.save(model.state_dict(), best_model_path.resolve())
+            torch.save(model.state_dict(), str(best_model_path))
 
     train_log.info(f'Average Train Time: {train_times.avg:.3f} s')
     train_log.info(f'Average Valid Time: {valid_times.avg:.3f} s')
@@ -386,16 +414,20 @@ def eval_model(
     test_dataloader: object,
     true_matrix: torch.Tensor,
     gpu: torch.device,
-    class_names: List[str],
-    dir_path: str,
+    **kwargs
 ):
     """
     Evaluate the model with test dataloader.
     This function gives a more info compared to eval_epoch.
     """
+    check_kwargs(
+        ['class_names', 'dir_path'],
+        kwargs=kwargs
+    )
+
     eval_log = logging.getLogger()
     eval_log.setLevel(logging.INFO)
-    eval_file_handler = logging.FileHandler(str(dir_path / 'model_eval'), mode='w')
+    eval_file_handler = logging.FileHandler(str(kwargs['dir_path'] / 'model_eval'), mode='w')
     eval_file_handler.setFormatter(logging.Formatter('%(message)s'))
     eval_log.addHandler(eval_file_handler)
 
@@ -534,7 +566,7 @@ def eval_model(
         c_report = classification_report(
             answers,
             predictions,
-            target_names=class_names,
+            target_names=kwargs['class_names'],
             digits=4
         )
         eval_log.info(f'{c_report}')
@@ -597,49 +629,56 @@ def get_all_explanation(
     model: object,
     dataset: str,
     test_df: pd.DataFrame,
-    atom_pool: object,
-    true_matrix: torch.Tensor,
     gpu: torch.device,
-    tf_tokenizer: object,
-    atom_tokenizer: object,
-    class_names: List[str],
-    tabular_info: Tuple[dict, dict, dict]=None,
-    tabular_column_type: Tuple[list, list, list]=None,
+    **kwargs
 ) -> Tuple[List[str], List[dict]]:
     """
     Extract all explanations of given test dataset
     """
-    if dataset == 'adult':
-        categorical_x_col, numerical_x_col, y_col = tabular_column_type
-        cat_map, _, numerical_max = tabular_info
+    check_kwargs(
+        ['atom_pool', 'true_matrix'],
+        kwargs=kwargs
+    )
+    atom_pool = kwargs['atom_pool']
+    true_matrix = kwargs['true_matrix']
+
+    class_names = get_class_names(dataset)
+    y_col = get_label_column(dataset)
+
+    if dataset in ['yelp', 'clickbait']:
+        check_kwargs(
+            ['tf_tokenizer', 'atom_tokenizer'],
+            value=True,
+            kwargs=kwargs
+        )
+        tf_tokenizer = kwargs['tf_tokenizer']
+        atom_tokenizer = kwargs['atom_tokenizer']
+    elif dataset == 'adult':
+        tf_tokenizer = None
+        atom_tokenizer = None
+
+        tabular_column_type = get_tabular_column_type(
+            dataset=dataset
+        )
+        tabular_info = load_tabular_info(
+            dataset=dataset
+        )
+    else:
+        raise ValueError(f'Dataset {dataset} is not supported')
 
     exp_list = []
     result_list = []
     for target_id in tqdm(range(len(test_df)), desc='Extracting Explanations'):
-        exp = ''
-
-        target_context = ''
         row = test_df.iloc[target_id,:]
 
-        if dataset == 'yelp':
-            target_context += f'text: {row["text"]}\n'
-        elif dataset == 'clickbait':
-            target_context += f'title: {row["title"]}\n'
-            target_context += f'text: {row["text"]}\n'
-        elif dataset == 'adult':
-            for key in row.index:
-                value = row[key]
-                if key in numerical_x_col:
-                    target_context += f'{key}: {round(value * numerical_max[key], 1)}\n'
-                elif key in y_col:
-                    continue
-                else:
-                    if value == 1:
-                        context, target = key.split('_')
-                        assert context in categorical_x_col
-                        cur = cat_map[f'{context}_idx2key'][int(float(target))]
-                        target_context += f'{context}: {cur}\n'
+        exp = ''
 
+        target_context = get_single_context(
+            row,
+            dataset,
+            tabular_column_type,
+            tabular_info
+        )
         exp += f'{target_context}\n'
 
         inputs = get_single_input(
@@ -660,8 +699,7 @@ def get_all_explanation(
         )
         pred = max(class_probs, key=class_probs.get)
 
-        assert len(y_col) == 1
-        y = int(row[y_col[0]])
+        y = int(row[y_col])
 
         label = class_names[y]
 

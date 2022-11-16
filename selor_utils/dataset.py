@@ -252,12 +252,19 @@ class PretrainDataset(Dataset):
         true_matrix: torch.Tensor,
         train_y: torch.Tensor,
         n_sample: int,
-        num_classes: int=2,
-        min_df: int=200,
-        max_df: float=0.95,
+        **kwargs
     ):
+        default_kwargs = {
+            'num_classes': 2,
+            'min_df': 200,
+            'max_df': 0.95,
+        }
+        default_kwargs.update(kwargs)
+        kwargs = default_kwargs
+
         self.n_atom, self.n_data = true_matrix.shape
         self.n_candidate, self.antecedent_len = candidate.shape
+        num_classes = kwargs['num_classes']
         self.num_classes = num_classes
 
         self.x = []
@@ -302,8 +309,8 @@ class PretrainDataset(Dataset):
 
                     max_value, max_index = torch.max(mu, dim=1)
 
-                    min_df_mask = (n >= min_df)
-                    max_df_mask = (n <= (max_df * self.n_data))
+                    min_df_mask = (n >= kwargs['min_df'])
+                    max_df_mask = (n <= (kwargs['max_df'] * self.n_data))
                     uniform_prob_mask = (max_value != (1 / num_classes))
                     mask = min_df_mask & max_df_mask & uniform_prob_mask
 
@@ -745,7 +752,7 @@ def create_dataset(
             atom_pool=atom_pool
         )
     else:
-        raise ValueError(f'Dataset {datasete} is not supported.')
+        raise ValueError(f'Dataset {dataset} is not supported.')
 
     return ret
 
@@ -766,6 +773,42 @@ def create_dataloader(
         persistent_workers=False,
         pin_memory=False,
     )
+
+def get_single_context(
+    target: pd.DataFrame,
+    dataset: str,
+    tabular_column_type: List[str],
+    tabular_info: Tuple[dict, dict, dict],
+):
+    """
+    Get a single context for given instance.
+    Used to get an base contents for explanation of a single instance.
+    """
+    categorical_x_col, numerical_x_col, y_col = tabular_column_type
+    cat_map, _, numerical_max = tabular_info
+
+    target_context = ''
+
+    if dataset == 'yelp':
+        target_context += f'text: {target["text"]}\n'
+    elif dataset == 'clickbait':
+        target_context += f'title: {target["title"]}\n'
+        target_context += f'text: {target["text"]}\n'
+    elif dataset == 'adult':
+        for key in target.index:
+            value = target[key]
+            if key in numerical_x_col:
+                target_context += f'{key}: {round(value * numerical_max[key], 1)}\n'
+            elif key in y_col:
+                continue
+            else:
+                if value == 1:
+                    context, category = key.split('_')
+                    assert context in categorical_x_col
+                    cur = cat_map[f'{context}_idx2key'][int(float(category))]
+                    target_context += f'{context}: {cur}\n'
+
+    return target_context
 
 def get_single_input(
     target: pd.DataFrame,
@@ -870,21 +913,19 @@ def create_pretrain_dataset(
     true_matrix: torch.Tensor,
     train_y: torch.Tensor,
     n_sample: int,
-    num_classes: int=2,
-    min_df: int=200,
-    max_df: float=0.95,
+    **kwargs
 ) -> object:
     """
     Create a dataset for pretraining consequent estimator with given antecedent candidates.
     """
     p_ds = PretrainDataset(
-        candidate,
-        true_matrix,
-        train_y,
-        n_sample,
-        num_classes,
-        min_df,
-        max_df,
+        candidate=candidate,
+        true_matrix=true_matrix,
+        train_y=train_y,
+        n_sample=n_sample,
+        num_classes=kwargs['num_classes'],
+        min_df=kwargs['min_df'],
+        max_df=kwargs['max_df'],
     )
 
     return p_ds

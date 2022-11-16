@@ -9,6 +9,8 @@ from transformers import logging
 from transformers import BertModel, BertTokenizer, BertConfig
 from transformers import RobertaModel, RobertaTokenizer, RobertaConfig
 
+from .utils import check_kwargs
+
 def get_tf_model(
     base: str='bert'
 ) -> Tuple[object, ...]:
@@ -45,16 +47,25 @@ class BaseModel(nn.Module):
         self,
         dataset: str='yelp',
         base: str='bert',
-        input_dim: int=512,
-        hidden_dim: int=768,
-        tf_model: object=None,
-        num_classes: int=2,
+        **kwargs
     ):
         super().__init__()
+        default_kwargs = {
+            'input_dim': 512,
+            'hidden_dim': 768,
+            'num_classes': 2,
+        }
+        default_kwargs.update(kwargs)
+        kwargs = default_kwargs
+
         self.model_name = 'base'
 
         self.dataset = dataset
         self.base = base
+
+        hidden_dim = kwargs['hidden_dim']
+        input_dim = kwargs['input_dim']
+        num_classes = kwargs['num_classes']
 
         if self.base == 'dnn':
             self.linear_base = nn.Sequential(
@@ -65,7 +76,12 @@ class BaseModel(nn.Module):
                 nn.Linear(hidden_dim, hidden_dim),
             )
         else:
-            self.transformer_model = tf_model
+            check_kwargs(
+                ['tf_model'],
+                value=True,
+                kwargs=kwargs
+            )
+            self.tf_model = kwargs['tf_model']
 
         self.base_head = nn.Linear(hidden_dim, num_classes)
 
@@ -78,7 +94,7 @@ class BaseModel(nn.Module):
             h = self.linear_base(x)
         else:
             input_ids, attention_mask, _ = inputs
-            out = self.transformer_model(
+            out = self.tf_model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
             )
@@ -99,12 +115,12 @@ class ConsequentEstimator(nn.Module):
     """
     def __init__(
         self,
-        n_class: int=2,
+        num_classes: int=2,
         hidden_dim: int=768,
         atom_embedding: torch.Tensor=None,
     ):
         super().__init__()
-        self.n_class = n_class
+        self.num_classes = num_classes
         encoder_layer = nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=8, batch_first=True)
         self.cp_te = nn.TransformerEncoder(encoder_layer, num_layers=6)
         self.atom_embedding=atom_embedding
@@ -114,7 +130,7 @@ class ConsequentEstimator(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, n_class)
+            nn.Linear(hidden_dim, num_classes)
         )
 
 
@@ -123,7 +139,7 @@ class ConsequentEstimator(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, n_class)
+            nn.Linear(hidden_dim, num_classes)
         )
 
         self.coverage_head = nn.Sequential(
@@ -250,47 +266,52 @@ class AntecedentGenerator(BaseModel):
         self,
         dataset: str='yelp',
         base: str='bert',
-        antecedent_len: int=4,
-        head: int=1,
-        num_atoms: int=5001,
-        input_dim: int=512,
-        hidden_dim: int=768,
-        num_classes: int=2,
-        n_data: int=56000,
         atom_embedding: torch.Tensor=None,
+        n_data: int=56000,
         consequent_estimator: object=None,
-        tf_model: object=None,
+        **kwargs
     ):
+        default_kwargs = {
+            'antecedent_len': 4,
+            'head': 1,
+            'num_atoms': 5001,
+            'input_dim': 512,
+            'hidden_dim': 768,
+            'num_classes': 2,
+            'tf_model': None,
+        }
+        default_kwargs.update(kwargs)
+        kwargs = default_kwargs
+
         super().__init__(
             dataset=dataset,
             base=base,
-            input_dim=input_dim,
-            hidden_dim=hidden_dim,
-            tf_model=tf_model,
-            num_classes=num_classes,
+            input_dim=kwargs['input_dim'],
+            hidden_dim=kwargs['hidden_dim'],
+            tf_model=kwargs['tf_model'],
+            num_classes=kwargs['num_classes'],
         )
 
         self.model_name = 'selor'
         self.rs_list = nn.ModuleList([
             AtomSelector(
-                num_atoms=num_atoms,
-                antecedent_len=antecedent_len,
-                hidden_dim=hidden_dim,
+                num_atoms=kwargs['num_atoms'],
+                antecedent_len=kwargs['antecedent_len'],
+                hidden_dim=kwargs['hidden_dim'],
                 atom_embedding=atom_embedding,
-            ) for i in range(head)
+            ) for i in range(kwargs['head'])
         ])
 
-        self.tf_model = tf_model
-        self.head = head
-        self.antecedent_len = antecedent_len
+        self.head = kwargs['head']
+        self.antecedent_len = kwargs['antecedent_len']
 
         if consequent_estimator is None:
-            self.consequent_estimator = None
-        else:
-            self.consequent_estimator = consequent_estimator
+            raise ValueError("Required argument 'consequent_estimator' is missing")
 
-        self.n_class = num_classes
-        self.num_atoms = num_atoms
+        self.consequent_estimator = consequent_estimator
+
+        self.num_classes = kwargs['num_classes']
+        self.num_atoms = kwargs['num_atoms']
         self.n_data = n_data
 
         self.base = base
@@ -299,7 +320,11 @@ class AntecedentGenerator(BaseModel):
         self.alpha = nn.Parameter(torch.ones(1), requires_grad=True)
         self.zero = nn.Parameter(torch.zeros(1), requires_grad=False)
 
-        self.atom_embedding = nn.Embedding(num_atoms, hidden_dim, _weight=atom_embedding)
+        self.atom_embedding = nn.Embedding(
+            kwargs['num_atoms'],
+            kwargs['hidden_dim'],
+            _weight=atom_embedding
+        )
 
     def forward(
         self,
@@ -329,8 +354,8 @@ class AntecedentGenerator(BaseModel):
             n = coverage * self.n_data
 
             smooth = self.alpha * torch.reciprocal(n)
-            smooth = smooth.unsqueeze(dim=-1).repeat(1, self.n_class)
-            class_prob = torch.div(mu + smooth, 1 + self.n_class * smooth)
+            smooth = smooth.unsqueeze(dim=-1).repeat(1, self.num_classes)
+            class_prob = torch.div(mu + smooth, 1 + self.num_classes * smooth)
 
             class_prob_list.append(class_prob)
 

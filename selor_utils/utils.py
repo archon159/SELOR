@@ -1,6 +1,7 @@
 """
 The module that contains utility functions
 """
+from typing import Iterable
 import argparse
 import random
 import numpy as np
@@ -17,6 +18,24 @@ def reset_seed(
     torch.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+def check_kwargs(
+    args: Iterable[str],
+    value: bool=False,
+    default: object=None,
+    kwargs=None,
+):
+    """
+    Check the validity of kwargs
+    """
+    missing = [arg for arg in args if arg not in kwargs]
+    if len(missing) > 0:
+        raise TypeError(f'Required arguments {missing} are missing.')
+
+    if value:
+        not_updated = [arg for arg in args if kwargs[arg] is default]
+        if len(not_updated) > 0:
+            raise ValueError(f'Required argument values for {not_updated} are missing.')
 
 def parse_arguments(
     notebook: bool=False

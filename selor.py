@@ -1,14 +1,12 @@
 """
 The script to train selor
 """
-from typing import List, Tuple
 import os
 from pathlib import Path
 import json
 from datetime import datetime
 import torch
 from torch import nn
-from tqdm import tqdm
 import pandas as pd
 
 # Import from custom files
@@ -101,7 +99,7 @@ if __name__ == "__main__":
     atom_embedding = torch.mm(norm_true_matrix.to(gpu), data_embedding.to(gpu)).detach()
 
     ce_model = net.ConsequentEstimator(
-        n_class=len(class_names),
+        num_classes=len(class_names),
         hidden_dim=hidden_dim,
         atom_embedding=atom_embedding,
     ).to(gpu)
@@ -196,14 +194,6 @@ if __name__ == "__main__":
         dir_path=dir_path
     )
 
-    if dtype == 'tab':
-        tabular_column_type = ds.get_tabular_column_type(
-            dataset=args.dataset
-        )
-        tabular_info = ds.load_tabular_info(
-            dataset=args.dataset
-        )
-    
     exp_list, result_list = te.get_all_explanation(
         model,
         args.dataset,
@@ -214,8 +204,6 @@ if __name__ == "__main__":
         atom_tokenizer=atom_tokenizer,
         gpu=gpu,
         class_names=class_names,
-        tabular_column_type=tabular_column_type,
-        tabular_info=tabular_info,
     )
 
     exp_path = dir_path / 'model_explanation.json'
