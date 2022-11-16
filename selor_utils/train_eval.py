@@ -2,56 +2,54 @@
 The module that contains utility functions related to model training and evaluation
 """
 import time
+import logging
+from typing import Dict, List, Tuple
+from pathlib import Path
 from collections import Counter
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ExponentialLR
 from tqdm import tqdm
 import torch
 import torch.nn.functional as F
+import pandas as pd
+from .dataset import get_single_input
 from sklearn.metrics import classification_report, roc_auc_score, precision_recall_curve, auc
 
-class AverageMeter():
+class AverageMeter:
     """
     Computes and stores the average and current value
     """
-    def __init__(self):
+    def __init__(
+        self
+    ):
         self.val = 0
         self.avg = 0
         self.sum = 0
         self.count = 0
 
-    def update(self, val, n=1):
+    def update(
+        self,
+        val: float,
+        n: int=1
+    ):
         self.val = val
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
 
-class Log():
-    """
-    Class for logging
-    """
-    def __init__(self, log_path):
-        self.flog = open(log_path, 'w', encoding='utf-8')
-
-    def write(self, string):
-        print(string, file=self.flog, flush=True)
-
-    def close(self):
-        self.flog.close()
-
 def pretrain(
-    ce_model,
-    train_dataloader,
-    learning_rate,
-    weight_decay,
-    epochs,
-    max_antecedent_len,
-    n_data,
-    w_mu,
-    w_sigma,
-    w_coverage,
-    gpu
-):
+    ce_model: object,
+    train_dataloader: object,
+    learning_rate: float,
+    weight_decay: float,
+    epochs: int,
+    max_antecedent_len: int,
+    n_data: int,
+    w_mu: torch.Tensor,
+    w_sigma: torch.Tensor,
+    w_coverage: torch.Tensor,
+    gpu: torch.device
+) -> object:
     """
     Pretrains the consequent estimator with given train dataloader.
     """
@@ -128,13 +126,13 @@ def pretrain(
     return ce_model
 
 def eval_pretrain(
-    ce_model,
-    test_dataloader,
-    max_antecedent_len,
-    n_data,
-    class_names,
-    gpu,
-):
+    ce_model: object,
+    test_dataloader: object,
+    max_antecedent_len: int,
+    n_data: int,
+    class_names: List[str],
+    gpu: torch.device,
+) -> Tuple[float, ...]:
     """
     Evaluate the consequent estimator with given test dataloader
     """
@@ -172,8 +170,8 @@ def eval_pretrain(
     sigma_pred = torch.stack(sigma_pred).cpu()
     sigma_answer = torch.stack(sigma_answer).cpu()
 
-    coverage_pred = torch.tensor(coverage_pred)
-    coverage_answer = torch.tensor(coverage_answer)
+    coverage_pred = torch.Tensor(coverage_pred)
+    coverage_answer = torch.Tensor(coverage_answer)
 
     avg_mu_err = torch.mean(torch.abs(mu_pred - mu_answer)).item()
     avg_sigma_err = torch.mean(torch.abs(sigma_pred - sigma_answer)).item()
@@ -196,12 +194,12 @@ def eval_pretrain(
     return avg_mu_err, avg_sigma_err, avg_coverage_err, f1_score
 
 def train_epoch(
-    optimizer,
-    model,
-    loss_func,
-    train_dataloader,
-    gpu,
-):
+    optimizer: object,
+    model: object,
+    loss_func: object,
+    train_dataloader: object,
+    gpu: torch.device,
+) -> Tuple[object, ...]:
     """
     Train the model for an epoch
     """
@@ -235,12 +233,12 @@ def train_epoch(
     return model, train_loss
 
 def eval_epoch(
-    model,
-    loss_func,
-    valid_dataloader,
-    class_names,
-    gpu,
-):
+    model: object,
+    loss_func: object,
+    valid_dataloader: object,
+    class_names: List[str],
+    gpu: torch.device,
+) -> Tuple[dict, float, float, object]:
     """
     Evaluate the model for an epoch
     """
@@ -297,18 +295,18 @@ def eval_epoch(
         return classification_dict, roc_auc, pr_auc, valid_loss
 
 def train(
-    model,
-    loss_func,
-    train_dataloader,
-    valid_dataloader,
-    learning_rate,
-    weight_decay,
-    gamma,
-    epochs,
-    gpu,
-    class_names,
-    dir_path,
-):
+    model: object,
+    loss_func: object,
+    train_dataloader: object,
+    valid_dataloader: object,
+    learning_rate: float,
+    weight_decay: float,
+    gamma: float,
+    epochs: int,
+    gpu: torch.device,
+    class_names: List[str],
+    dir_path: Path,
+) -> object:
     """
     Train the model and evaluate for entire epochs with given train and valid dataloader.
     """
@@ -322,24 +320,26 @@ def train(
     scheduler = ExponentialLR(optimizer, gamma=gamma)
 
     min_valid_loss = 100.0
-    best_model_path = f'{dir_path}/model_best.pt'
+    best_model_path = dir_path / 'model_best.pt'
 
     train_times = AverageMeter()
     valid_times = AverageMeter()
 
-    log_path = f'{dir_path}/log'
-    train_log = Log(log_path)
+    train_log = logging.getLogger()
+    train_log.setLevel(logging.INFO)
+    train_file_handler = logging.FileHandler(str(dir_path / 'log'), mode='w')
+    train_file_handler.setFormatter(logging.Formatter('%(message)s'))
+    train_log.addHandler(train_file_handler)
 
-    train_log.write('Start Training')
-
+    train_log.info('Start Training\n')
     for epoch in range(epochs):
-        train_log.write(f'Epoch {epoch}')
+        train_log.info(f'Epoch {epoch}')
 
         train_start = time.time()
         model, train_loss = train_epoch(optimizer, model, loss_func, train_dataloader, gpu)
         train_end = time.time()
         train_time = train_end - train_start
-        train_log.write(f'Training Time: {train_time:.3f} s')
+        train_log.info(f'Training Time: {train_time:.3f} s')
         train_times.update(train_time)
 
         scheduler.step()
@@ -354,44 +354,50 @@ def train(
         )
         valid_end = time.time()
         valid_time = valid_end - valid_start
-        train_log.write(f'Validation Time: {train_time:.3f} s')
+        train_log.info(f'Validation Time: {train_time:.3f} s')
         valid_times.update(valid_time)
 
-        train_log.write(f'Train Loss: {train_loss.avg:.3f}')
-        train_log.write(f'Valid Loss: {valid_loss.avg:.3f}')
-        train_log.write(f'Valid Macro-F1: {classification_dict["macro avg"]["f1-score"]:.4f}')
-        train_log.write(f'Valid ROC-AUC: {roc_auc:.4f}')
-        train_log.write(f'Valid PR-AUC: {pr_auc:.4f}')
-        train_log.write('\n')
+        valid_f1 = classification_dict["macro avg"]["f1-score"]
+        train_log.info(f'Train Loss: {train_loss.avg:.3f}')
+        train_log.info(f'Valid Loss: {valid_loss.avg:.3f}')
+        train_log.info(f'Valid Macro-F1: {valid_f1:.4f}')
+        train_log.info(f'Valid ROC-AUC: {roc_auc:.4f}')
+        train_log.info(f'Valid PR-AUC: {pr_auc:.4f}')
+        train_log.info('\n')
 
-        model_path = f'{dir_path}/model_epoch_{epoch}.pt'
-        torch.save(model.state_dict(), model_path)
+        model_path = dir_path / 'model_epoch_{epoch}.pt'
+        torch.save(model.state_dict(), model_path.resolve())
 
         if valid_loss.avg < min_valid_loss:
             min_valid_loss = valid_loss.avg
-            torch.save(model.state_dict(), best_model_path)
+            torch.save(model.state_dict(), best_model_path.resolve())
 
-    train_log.write(f'Average Train Time: {train_times.avg:.3f} s')
-    train_log.write(f'Average Valid Time: {valid_times.avg:.3f} s')
-    train_log.close()
+    train_log.info(f'Average Train Time: {train_times.avg:.3f} s')
+    train_log.info(f'Average Valid Time: {valid_times.avg:.3f} s')
+
+    train_log.removeHandler(train_file_handler)
+    train_file_handler.close()
 
     return model
 
 def eval_model(
-    model,
-    loss_func,
-    test_dataloader,
-    true_matrix,
-    gpu,
-    class_names,
-    dir_path,
+    model: object,
+    loss_func: object,
+    test_dataloader: object,
+    true_matrix: torch.Tensor,
+    gpu: torch.device,
+    class_names: List[str],
+    dir_path: str,
 ):
     """
     Evaluate the model with test dataloader.
     This function gives a more info compared to eval_epoch.
     """
-    eval_path = f'{dir_path}/model_eval'
-    eval_log = Log(eval_path)
+    eval_log = logging.getLogger()
+    eval_log.setLevel(logging.INFO)
+    eval_file_handler = logging.FileHandler(str(dir_path / 'model_eval'), mode='w')
+    eval_file_handler.setFormatter(logging.Formatter('%(message)s'))
+    eval_log.addHandler(eval_file_handler)
 
     pbar = tqdm(test_dataloader)
     model.eval()
@@ -470,7 +476,7 @@ def eval_model(
 
                 confidences.update(confidence.mean().item(), batch_size)
                 consistencies.update(consistency.mean().item(), batch_size)
-                uniques.update(torch.tensor(unique).float().mean().item())
+                uniques.update(torch.Tensor(unique).float().mean().item())
                 lengths.extend(length.float())
                 duplicates.update(duplicate.float().mean().item())
                 coverages.update(coverage.float().mean().item())
@@ -502,19 +508,19 @@ def eval_model(
             for length, count in count_length.items():
                 dist_length[length] = count / len(answers)
 
-        eval_log.write(f'Avg Test Loss: {test_loss.avg:.4f}')
-        eval_log.write(f'Evaluation Time: {eval_time:.3f} s')
+        eval_log.info(f'Avg Test Loss: {test_loss.avg:.4f}')
+        eval_log.info(f'Evaluation Time: {eval_time:.3f} s')
 
         if model.model_name == 'selor':
-            eval_log.write(f'Confidence: {confidences.avg:.4f}')
-            eval_log.write(f'Consistency: {consistencies.avg:.4f}')
-            eval_log.write(f'Duplicate: {duplicates.avg:.4f}')
-            eval_log.write(f'Unique: {uniques.avg:.4f}')
-            eval_log.write(f'Coverage: {coverages.avg:.4f}')
-            eval_log.write('Length')
+            eval_log.info(f'Confidence: {confidences.avg:.4f}')
+            eval_log.info(f'Consistency: {consistencies.avg:.4f}')
+            eval_log.info(f'Duplicate: {duplicates.avg:.4f}')
+            eval_log.info(f'Unique: {uniques.avg:.4f}')
+            eval_log.info(f'Coverage: {coverages.avg:.4f}')
+            eval_log.info('Length')
             for i in range(max_antecedent_len + 1):
                 if i in dist_length:
-                    eval_log.write(f'{i}: {dist_length[i]:.4f}')
+                    eval_log.info(f'{i}: {dist_length[i]:.4f}')
 
         roc_auc = roc_auc_score(answers, target_probs)
         precision, recall, _ = precision_recall_curve(
@@ -524,27 +530,28 @@ def eval_model(
         )
         pr_auc = auc(recall, precision)
 
-        eval_log.write('')
-        eval_log.write('Prediction Performance:')
-        eval_log.write(classification_report(
+        eval_log.info('Prediction Performance:')
+        c_report = classification_report(
             answers,
             predictions,
             target_names=class_names,
             digits=4
-        ))
-        eval_log.write(f'ROC-AUC: {roc_auc:.4f}')
-        eval_log.write(f'PR-AUC: {pr_auc:.4f}')
+        )
+        eval_log.info(f'{c_report}')
+        eval_log.info(f'ROC-AUC: {roc_auc:.4f}')
+        eval_log.info(f'PR-AUC: {pr_auc:.4f}')
 
-    eval_log.close()
+        eval_log.removeHandler(eval_file_handler)
+        eval_file_handler.close()
 
 def get_explanation(
-    model,
-    true_matrix,
-    atom_pool,
-    inputs,
-    class_names,
-    gpu,
-):
+    model: object,
+    true_matrix: torch.Tensor,
+    atom_pool: object,
+    inputs: Tuple[torch.Tensor, ...],
+    class_names: List[str],
+    gpu: torch.device,
+) -> Tuple[Dict[str, float], List[str], List[float]]:
     """
     Get an explanation for the instance.
     """
@@ -586,11 +593,112 @@ def get_explanation(
 
         return class_probs, antecedents, coverage_list
 
+def get_all_explanation(
+    model: object,
+    dataset: str,
+    test_df: pd.DataFrame,
+    atom_pool: object,
+    true_matrix: torch.Tensor,
+    gpu: torch.device,
+    tf_tokenizer: object,
+    atom_tokenizer: object,
+    class_names: List[str],
+    tabular_info: Tuple[dict, dict, dict]=None,
+    tabular_column_type: Tuple[list, list, list]=None,
+) -> Tuple[List[str], List[dict]]:
+    """
+    Extract all explanations of given test dataset
+    """
+    if dataset == 'adult':
+        categorical_x_col, numerical_x_col, y_col = tabular_column_type
+        cat_map, _, numerical_max = tabular_info
+
+    exp_list = []
+    result_list = []
+    for target_id in tqdm(range(len(test_df)), desc='Extracting Explanations'):
+        exp = ''
+
+        target_context = ''
+        row = test_df.iloc[target_id,:]
+
+        if dataset == 'yelp':
+            target_context += f'text: {row["text"]}\n'
+        elif dataset == 'clickbait':
+            target_context += f'title: {row["title"]}\n'
+            target_context += f'text: {row["text"]}\n'
+        elif dataset == 'adult':
+            for key in row.index:
+                value = row[key]
+                if key in numerical_x_col:
+                    target_context += f'{key}: {round(value * numerical_max[key], 1)}\n'
+                elif key in y_col:
+                    continue
+                else:
+                    if value == 1:
+                        context, target = key.split('_')
+                        assert context in categorical_x_col
+                        cur = cat_map[f'{context}_idx2key'][int(float(target))]
+                        target_context += f'{context}: {cur}\n'
+
+        exp += f'{target_context}\n'
+
+        inputs = get_single_input(
+            row,
+            dataset,
+            atom_pool,
+            tf_tokenizer=tf_tokenizer,
+            atom_tokenizer=atom_tokenizer,
+        )
+
+        class_probs, antecedents, coverage_list = get_explanation(
+            model,
+            true_matrix,
+            atom_pool,
+            inputs,
+            class_names,
+            gpu
+        )
+        pred = max(class_probs, key=class_probs.get)
+
+        assert len(y_col) == 1
+        y = int(row[y_col[0]])
+
+        label = class_names[y]
+
+        exp += f'Label: {label}\n'
+        exp += f'Prediction: {pred}\n\n'
+        exp += 'Class Probability\n'
+        for class_name, prob in class_probs.items():
+            exp += f'{class_name}: {prob}\n'
+
+        exp += '\n'
+        for i, antecedent in enumerate(antecedents):
+            coverage = coverage_list[i]
+
+            exp += f'Explanation {i}: {antecedent}\n'
+            exp += f'Coverage: {coverage:.6f}\n'
+            exp += '\n'
+
+        result_dict = {
+            'Id': target_id,
+            'Target': target_context,
+            'Label': label,
+            'Prediction': pred,
+            'Explanation': antecedents,
+            'Class Probability': class_probs,
+            'Coverage': coverage_list
+        }
+
+        result_list.append(result_dict)
+        exp_list.append(exp)
+
+    return exp_list, result_list
+
 def get_base_embedding(
-    model,
-    train_dataloader,
-    gpu,
-):
+    model: object,
+    train_dataloader: object,
+    gpu: torch.device,
+) -> torch.Tensor:
     """
     Get embedding of given base model and train dataloader.
     """

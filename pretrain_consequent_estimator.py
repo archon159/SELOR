@@ -4,8 +4,9 @@ The script to pretrain the consequent estimator
 import pickle
 import copy
 import time
-import os
+from pathlib import Path
 import torch
+import pandas as pd
 from prettytable import PrettyTable
 
 # Import from custom files
@@ -28,23 +29,23 @@ if __name__ == "__main__":
     gpu = torch.device(f'cuda:{args.gpu}')
     utils.reset_seed(seed)
 
-    if 'consequent_estimators' not in os.listdir(f'./{args.save_dir}'):
-        os.system(f'mkdir ./{args.save_dir}/consequent_estimators')
-
-    ce_path = f'ce_{args.base}_dataset_{args.dataset}_pretrain_samples_{args.pretrain_samples}'
+    ce_path = f'ce_{args.base}'
+    ce_path += f'_dataset_{args.dataset}'
+    ce_path += f'_pretrain_samples_{args.pretrain_samples}'
     if dtype == 'nlp':
         ce_path += f'_num_atoms_{args.num_atoms}'
+    ce_path += f'_seed_{args.seed}'
 
     dir_path = f'./{args.save_dir}/consequent_estimators/{ce_path}'
+    dir_path = Path(dir_path)
     class_names = ds.get_class_names(args.dataset)
 
     print("Loading atom_pool")
     atom_pool_path = f'./{args.save_dir}/atom_pool/atom_pool_{args.dataset}'
     if dtype == 'nlp':
         atom_pool_path += f'_num_atoms_{args.num_atoms}'
-    atom_pool_path += '.pkl'
-    with open(atom_pool_path, 'rb') as f:
-        ap = pickle.load(f)
+    atom_pool_path += f'_seed_{args.seed}'
+    ap = pd.read_pickle(atom_pool_path)
 
     # Whether each train sample satisfies each atom
     print("Loading true_matrix")
@@ -54,7 +55,7 @@ if __name__ == "__main__":
     # Embedding from the base model for each train sample
     print("Loading base_embedding")
     base_embedding_path = f'./{args.save_dir}/base_models/'
-    base_embedding_path += f'base_{args.base}_dataset_{args.dataset}/'
+    base_embedding_path += f'base_{args.base}_dataset_{args.dataset}_seed_{args.seed}/'
     base_embedding_path += 'train_embeddings.pt'
     base_embedding = torch.load(base_embedding_path)
     n_data, hidden_dim = base_embedding.shape
@@ -70,24 +71,21 @@ if __name__ == "__main__":
 
     model_pretrain_dict = {}
     if args.only_eval:
-        with open(f'{dir_path}/test_dataloader_dict', 'rb') as f:
-            test_dataloader_dict = pickle.load(f)
+        test_dataloader_dict = pd.read_pickle(str(dir_path / 'test_dataloader_dict'))
 
         for i in range(1, args.antecedent_len + 1):
             print(f"Loading consequent estimator for length {i} antecedents")
-            ce_model_path = f'{dir_path}/'
-            ce_model_path += f'ce_pretrain_{i}_{args.base}_dataset_{args.dataset}.pt'
-            ce_model.load_state_dict(torch.load(ce_model_path), strict=True)
+            ce_model_path = dir_path / f'ce_pretrain_{i}_{args.base}_dataset_{args.dataset}.pt'
+            ce_model.load_state_dict(torch.load(str(ce_model_path)), strict=True)
             model_pretrain_dict[i] = copy.deepcopy(ce_model)
 
     else:
-        if ce_path not in os.listdir(f'./{args.save_dir}/consequent_estimators'):
-            os.system(f'mkdir {dir_path}')
+        dir_path.mkdir(parents=True, exist_ok=True)
 
         # Create datasets
         train_df, valid_df, test_df = ds.load_data(dataset=args.dataset)
         col_label = ds.get_label_column(args.dataset)
-        train_y = torch.tensor(train_df[col_label]).float()
+        train_y = torch.Tensor(train_df[col_label]).float()
 
         n_atom = ap.num_atoms()
 
@@ -100,17 +98,15 @@ if __name__ == "__main__":
                 if i == 1:
                     candidate = [(j,) for j in range(n_atom)]
                 else:
-                    tm_path = f'./{args.save_dir}/tm_satis/tm_{i}_satis'
-                    tm_path += f'_dataset_{args.dataset}'
+                    tm_path = f'./{args.save_dir}/tm_satis/tm_satis_seed_{args.seed}/'
+                    tm_path += f'tm_{i}_satis_dataset_{args.dataset}'
                     if dtype == 'nlp':
                         tm_path += f'_num_atoms_{args.num_atoms}'
                     tm_path += f'_min_df_{args.min_df}'
-                    tm_path += '.pkl'
 
-                    with open(tm_path, 'rb') as f:
-                        candidate = pickle.load(f)
+                    candidate = pd.read_pickle(tm_path)
 
-                cand_dict[i] = torch.tensor(candidate)
+                cand_dict[i] = torch.Tensor(candidate).long()
 
         sampling_start = time.time()
 
@@ -132,7 +128,8 @@ if __name__ == "__main__":
 
         sampling_end = time.time()
 
-        with open(f'{dir_path}/pretrain_dataset_dict', 'wb') as f:
+        pretrain_dataset_dict_path = dir_path / 'pretrain_dataset_dict'
+        with pretrain_dataset_dict_path.open('wb') as f:
             pickle.dump(pretrain_dataset_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
 
         # Create dataloaders
@@ -154,9 +151,12 @@ if __name__ == "__main__":
             train_dataloader_dict[i] = train_dataloader
             test_dataloader_dict[i] = test_dataloader
 
-        with open(f'{dir_path}/train_dataloader_dict', 'wb') as f:
+        train_dataloader_path = dir_path / 'train_dataloader_dict'
+        test_dataloader_path = dir_path / 'test_dataloader_dict'
+
+        with train_dataloader_path.open('wb') as f:
             pickle.dump(train_dataloader_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
-        with open(f'{dir_path}/test_dataloader_dict', 'wb') as f:
+        with test_dataloader_path.open('wb') as f:
             pickle.dump(test_dataloader_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
 
         print()
@@ -218,5 +218,6 @@ if __name__ == "__main__":
             row.append(round(f1, 4))
         result_table.add_row(row)
 
-    with open(f'{dir_path}/ce_pretrain_eval', 'w', encoding='utf-8') as feval:
+    eval_path = dir_path / 'ce_pretrain_eval'
+    with eval_path.open('w', encoding='utf-8') as feval:
         print(result_table, file=feval, flush=True)

@@ -1,19 +1,24 @@
 """
 The script to sample antecedents for pretraining of consequent estimator
 """
-import pickle
-import os
+from pathlib import Path
 import time
-from tqdm import tqdm
+import pickle
 import numpy as np
 import torch
+from tqdm import tqdm
+import pandas as pd
 
 # Import from custom files
 from selor_utils import atom as at
 from selor_utils import utils
 from selor_utils import dataset as ds
 
-def get_tm_satis(tm_left, tm_right, min_df=200):
+def get_tm_satis(
+    tm_left: torch.Tensor,
+    tm_right: torch.Tensor,
+    min_df: int=200
+) -> torch.Tensor:
     """
     Conduct matrix multiplication to obtain the antecedents that satisfies both matrices.
     """
@@ -38,16 +43,15 @@ if __name__ == "__main__":
     atom_pool_path = f'./{args.save_dir}/atom_pool/atom_pool_{args.dataset}'
     if dtype == 'nlp':
         atom_pool_path += f'_num_atoms_{args.num_atoms}'
-    atom_pool_path += '.pkl'
-    with open(atom_pool_path, 'rb') as f:
-        ap = pickle.load(f)
+    atom_pool_path += f'_seed_{args.seed}'
+    ap = pd.read_pickle(atom_pool_path)
 
     # Whether each train sample satisfies each atom
     tm = at.get_true_matrix(ap).to(gpu)
     sampling_start = time.time()
 
-    if 'tm_satis' not in os.listdir(f'./{args.save_dir}'):
-        os.system(f'mkdir ./{args.save_dir}/tm_satis')
+    save_path = f'./{args.save_dir}/tm_satis/tm_satis_seed_{args.seed}'
+    Path(save_path).mkdir(parents=True, exist_ok=True)
 
     print('Create tm_2_satis')
     print(tm.shape)
@@ -55,10 +59,10 @@ if __name__ == "__main__":
     tm_2_satis = {tuple(sorted(r)) for r in tqdm(tm_2_satis.tolist()) if r[0] != r[1]}
     tm_2_satis = sorted(list(tm_2_satis))
 
-    tm_2_satis_path = f'./{args.save_dir}/tm_satis/tm_2_satis_dataset_{args.dataset}'
+    tm_2_satis_path = f'{save_path}/tm_2_satis_dataset_{args.dataset}'
     if dtype == 'nlp':
         tm_2_satis_path += f'_num_atoms_{args.num_atoms}'
-    tm_2_satis_path += f'_min_df_{args.min_df}.pkl'
+    tm_2_satis_path += f'_min_df_{args.min_df}'
     with open(tm_2_satis_path, 'wb') as f:
         pickle.dump(tm_2_satis, f, pickle.HIGHEST_PROTOCOL)
 
@@ -72,13 +76,13 @@ if __name__ == "__main__":
         satis = set.intersection(*satis_list)
         for s in satis:
             tm_2[k, s] = 1
-    tm_2 = torch.tensor(tm_2)
+    tm_2 = torch.Tensor(tm_2)
     tm_2 = tm_2[:min(tm_2.shape[0], gamma * args.pretrain_samples), :]
 
-    tm_2_path = f'./{args.save_dir}/tm_satis/tm_2_dataset_{args.dataset}'
+    tm_2_path = f'{save_path}/tm_2_dataset_{args.dataset}'
     if dtype == 'nlp':
         tm_2_path += f'_num_atoms_{args.num_atoms}'
-    tm_2_path += f'_min_df_{args.min_df}.pkl'
+    tm_2_path += f'_min_df_{args.min_df}'
     with open(tm_2_path, 'wb') as f:
         pickle.dump(tm_2, f, pickle.HIGHEST_PROTOCOL)
 
@@ -92,10 +96,10 @@ if __name__ == "__main__":
     tm_3_satis = sorted(list(tm_3_satis))
     tm_3_satis = [r for r in tqdm(tm_3_satis) if len(set(r)) == len(r)]
 
-    tm_3_satis_path = f'./{args.save_dir}/tm_satis/tm_3_satis_dataset_{args.dataset}'
+    tm_3_satis_path = f'{save_path}/tm_3_satis_dataset_{args.dataset}'
     if dtype == 'nlp':
         tm_3_satis_path += f'_num_atoms_{args.num_atoms}'
-    tm_3_satis_path += f'_min_df_{args.min_df}.pkl'
+    tm_3_satis_path += f'_min_df_{args.min_df}'
     with open(tm_3_satis_path, 'wb') as f:
         pickle.dump(tm_3_satis, f, pickle.HIGHEST_PROTOCOL)
 
@@ -109,10 +113,10 @@ if __name__ == "__main__":
     tm_4_satis = sorted(list(tm_4_satis))
     tm_4_satis = [r for r in tqdm(tm_4_satis) if len(set(r)) == len(r)]
 
-    tm_4_satis_path = f'./{args.save_dir}/tm_satis/tm_4_satis_dataset_{args.dataset}'
+    tm_4_satis_path = f'{save_path}/tm_4_satis_dataset_{args.dataset}'
     if dtype == 'nlp':
         tm_4_satis_path += f'_num_atoms_{args.num_atoms}'
-    tm_4_satis_path += f'_min_df_{args.min_df}.pkl'
+    tm_4_satis_path += f'_min_df_{args.min_df}'
     with open(tm_4_satis_path, 'wb') as f:
         pickle.dump(tm_4_satis, f, pickle.HIGHEST_PROTOCOL)
 

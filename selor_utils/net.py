@@ -1,21 +1,21 @@
 """
 The module that contains utility functions and classes for models
 """
+from typing import List, Tuple
 import torch
 from torch import nn
 import torch.nn.functional as F
 from transformers import logging
-logging.set_verbosity_error()
-
 from transformers import BertModel, BertTokenizer, BertConfig
 from transformers import RobertaModel, RobertaTokenizer, RobertaConfig
 
 def get_tf_model(
-    base='bert'
-):
+    base: str='bert'
+) -> Tuple[object, ...]:
     """
     Get transformer model for NLP task.
     """
+    logging.set_verbosity_error()
     if base == 'bert':
         pre_trained_model_name = 'bert-base-uncased'
         tf_tokenizer = BertTokenizer.from_pretrained(pre_trained_model_name)
@@ -43,12 +43,12 @@ class BaseModel(nn.Module):
     """
     def __init__(
         self,
-        dataset='yelp',
-        base='bert',
-        input_dim=512,
-        hidden_dim=int,
-        tf_model=None,
-        num_classes=2,
+        dataset: str='yelp',
+        base: str='bert',
+        input_dim: int=512,
+        hidden_dim: int=768,
+        tf_model: object=None,
+        num_classes: int=2,
     ):
         super().__init__()
         self.model_name = 'base'
@@ -69,7 +69,10 @@ class BaseModel(nn.Module):
 
         self.base_head = nn.Linear(hidden_dim, num_classes)
 
-    def forward(self, inputs):
+    def forward(
+        self,
+        inputs: Tuple[torch.Tensor, ...]
+    ) -> Tuple[torch.Tensor, ...]:
         if self.base == 'dnn':
             x, _ = inputs
             h = self.linear_base(x)
@@ -96,9 +99,9 @@ class ConsequentEstimator(nn.Module):
     """
     def __init__(
         self,
-        n_class=2,
-        hidden_dim=768,
-        atom_embedding=None,
+        n_class: int=2,
+        hidden_dim: int=768,
+        atom_embedding: torch.Tensor=None,
     ):
         super().__init__()
         self.n_class = n_class
@@ -133,8 +136,8 @@ class ConsequentEstimator(nn.Module):
 
     def forward(
         self,
-        x,
-    ):
+        x: torch.Tensor,
+    ) -> Tuple[torch.Tensor, ...]:
         emb = torch.matmul(x, self.atom_embedding)
         out = self.cp_te(emb)
         out = torch.mean(out, dim=1)
@@ -152,10 +155,10 @@ class AtomSelector(nn.Module):
     """
     def __init__(
         self,
-        num_atoms=154,
-        antecedent_len=2,
-        hidden_dim=768,
-        atom_embedding=None,
+        num_atoms: int=154,
+        antecedent_len: int=2,
+        hidden_dim: int=768,
+        atom_embedding: torch.Tensor=None,
     ):
         super().__init__()
         self.gru = nn.GRU(
@@ -169,7 +172,13 @@ class AtomSelector(nn.Module):
         self.atom_embedding = atom_embedding
         self.zero_v = None
 
-    def filtered_softmax(self, x, x_, pos, pre_max_index):
+    def filtered_softmax(
+        self,
+        x: torch.Tensor,
+        x_: torch.Tensor,
+        pos: int,
+        pre_max_index: torch.Tensor,
+    ) -> torch.Tensor:
         """
         Conduct Gumbel-softmax for atoms that is satisfied by the instance.
         If an instance does not satisfy any atom, then choosen NULL atom.
@@ -190,9 +199,9 @@ class AtomSelector(nn.Module):
 
     def forward(
         self,
-        cls,
-        x_,
-    ):
+        cls: torch.Tensor,
+        x_: torch.Tensor,
+    ) -> torch.Tensor:
         cls = cls.unsqueeze(dim=0).contiguous()
         cur_input = cls
         cur_h_0 = None
@@ -239,18 +248,18 @@ class AntecedentGenerator(BaseModel):
     """
     def __init__(
         self,
-        dataset='yelp',
-        base='bert',
-        antecedent_len=4,
-        head=1,
-        num_atoms=5001,
-        input_dim=512,
-        hidden_dim=768,
-        num_classes=2,
-        n_data=56000,
-        atom_embedding=None,
-        consequent_estimator=None,
-        tf_model=None,
+        dataset: str='yelp',
+        base: str='bert',
+        antecedent_len: int=4,
+        head: int=1,
+        num_atoms: int=5001,
+        input_dim: int=512,
+        hidden_dim: int=768,
+        num_classes: int=2,
+        n_data: int=56000,
+        atom_embedding: torch.Tensor=None,
+        consequent_estimator: object=None,
+        tf_model: object=None,
     ):
         super().__init__(
             dataset=dataset,
@@ -291,10 +300,11 @@ class AntecedentGenerator(BaseModel):
         self.zero = nn.Parameter(torch.zeros(1), requires_grad=False)
 
         self.atom_embedding = nn.Embedding(num_atoms, hidden_dim, _weight=atom_embedding)
+
     def forward(
         self,
-        inputs
-    ):
+        inputs: Tuple[torch.Tensor, ...]
+    ) -> Tuple[torch.Tensor, List[torch.Tensor], List[torch.Tensor]]:
         if self.base == 'dnn':
             x, x_ = inputs
             h = self.linear_base(x)

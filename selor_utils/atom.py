@@ -2,57 +2,23 @@
 The module that contains utility functions and classes related to atoms
 """
 from collections import OrderedDict, defaultdict, Counter
+from typing import List, Dict, Tuple
 import re
 import numpy as np
 from tqdm import tqdm
 import torch
+import pandas as pd
 
-def get_true_matrix(atom_pool):
-    """
-    Get "true matrix" for given atom pool.
-    """
-    num_atoms = atom_pool.num_atoms()
-    satis_dict = atom_pool.atom_satis_dict
-    targets = atom_pool.atoms
-
-    true_matrix = np.zeros((num_atoms, atom_pool.n_data))
-
-    for atom_index, satis in tqdm(satis_dict.items()):
-        atom = targets[atom_index]
-        for instance in satis:
-            true_matrix[atom.atom_idx, instance] = 1
-
-    return torch.Tensor(true_matrix).float().detach()
-
-def get_word_count(
-    dataframe,
-    tokenizer,
-    pos_type,
-):
-    """
-    Get word count of given data.
-    """
-    word_count = np.zeros((len(dataframe), len(pos_type) * tokenizer.vocab_size))
-    for pos, col in enumerate(pos_type):
-        for i, instance in enumerate(dataframe[col]):
-            tokens = tokenizer.tokenize(instance)
-            counter = Counter(tokens)
-
-            for token, count in counter.items():
-                word_count[i, pos * tokenizer.vocab_size + token] = count
-
-    return word_count
-
-class AtomTokenizer():
+class AtomTokenizer:
     """
     The tokenizer for atoms
     """
     def __init__(
         self,
-        data_df,
-        dataset='yelp',
-        min_freq=10,
-        max_len=512
+        data_df: pd.DataFrame,
+        dataset: str='yelp',
+        min_freq: int=10,
+        max_len: int=512
     ):
         self.dataset = dataset
         if dataset=='yelp':
@@ -60,7 +26,7 @@ class AtomTokenizer():
         elif dataset == 'clickbait':
             data_list = data_df['title'].tolist() + data_df['text'].tolist()
         else:
-            assert 0
+            raise ValueError(f'Dataset {dataset} is not supported.')
 
         word_dict = defaultdict(int)
         for instance in data_list:
@@ -86,7 +52,10 @@ class AtomTokenizer():
         for word, idx in self.word2idx.items():
             self.idx2word[idx] = word
 
-    def preprocess(self, instance):
+    def preprocess(
+        self,
+        instance: str
+    ) -> List[str]:
         """
         Preprocess the given instance
         """
@@ -96,7 +65,10 @@ class AtomTokenizer():
 
         return words
 
-    def tokenize(self, instance):
+    def tokenize(
+        self,
+        instance: str
+    ) -> List[int]:
         """
         Tokenize the given instance
         """
@@ -115,25 +87,25 @@ class AtomTokenizer():
 
         return tokens
 
-class Atom():
+class Atom:
     """
     The smallest unit of logic rule
     """
     def __init__(
         self,
-        c_type, # dummy, text, categorical, numeric
-        context, # For all kinds of dataset
-        bigger, # In categorical case, bigger==True means context == target
-        target,
-        position, # For multiple input dataset
-        n,
-        consequent,
-        atom_idx,
-        tokenizer=None, # For text
-        cat_map=None, # For categorical
-        col2feature=None, # For categorical or numeric
-        numerical_max=None, # For numerical
-        pos_type=None,
+        c_type: str, # dummy, text, categorical, numeric
+        context: str, # For all kinds of dataset
+        bigger: bool, # In categorical case, bigger==True means context == target
+        target: str,
+        position: int, # For multiple input dataset
+        n: int,
+        consequent: List[float],
+        atom_idx: int,
+        tokenizer: object=None, # For text
+        cat_map: Dict[str, str]=None, # For categorical
+        col2feature: Dict[str, int]=None, # For categorical or numeric
+        numerical_max: Dict[str, float]=None, # For numerical
+        pos_type: List[str]=None,
     ):
         self.c_type = c_type
         self.target = target
@@ -172,12 +144,12 @@ class Atom():
                 self.display_str = f'{context} < {round(target * numerical_max[context], 1)}'
 
         else:
-            assert 0
+            raise ValueError(f'Context type {c_type} is not supported.')
 
     def check(
         self,
-        x_
-    ):
+        x_: np.array
+    ) -> int:
         """
         Check if given x_ satisfies this atom
         """
@@ -199,7 +171,7 @@ class Atom():
         elif self.c_type == 'dummy':
             ret = np.zeros(x_.shape[0])
         else:
-            assert 0
+            raise ValueError(f'Context type {c_type} is not supported.')
 
         return ret.astype(int)
 
@@ -216,19 +188,20 @@ class Atom():
         disp += f'Consequent: {dummy_consequent}'
         print(disp)
 
-class AtomPool():
+class AtomPool:
     """
     The pool of atoms
     """
     def __init__(
         self,
-        train_x,
-        train_y,
-        dtype='nlp',
-        tokenizer=None,
-        tabular_info=None,
-        tabular_column_type=None,
-        alpha=1,
+        train_x: np.array,
+        train_y: np.array,
+        dtype: str='nlp',
+        tokenizer: object=None,
+        tabular_info: Tuple[dict, dict, dict]=None,
+        tabular_column_type: Tuple[list, list, list]=None,
+        pos_type: List[str]=None,
+        alpha: int=1,
     ):
         self.train_x = train_x
         self.train_y = train_y
@@ -236,6 +209,8 @@ class AtomPool():
         self.alpha = alpha
         self.n_class = len(set(train_y))
         self.n_data = len(train_x)
+
+        self.pos_type = pos_type
 
         self.atom_idx = 0
         self.atoms = OrderedDict()
@@ -269,16 +244,15 @@ class AtomPool():
                     feature_id += 1
 
         else:
-            assert 0
+            raise ValueError(f'Dataset type {dtype} is not supported.')
 
     def add_atom(
         self,
-        c_type,
-        context,
-        bigger,
-        target,
-        position=0,
-        pos_type=None,
+        c_type: str,
+        context: str,
+        bigger: bool,
+        target: str,
+        position: int=0,
     ):
         """
         Add an atom to the atom pool with given info
@@ -310,7 +284,7 @@ class AtomPool():
             cat_map=self.cat_map,
             col2feature=self.col2feature,
             numerical_max=self.numerical_max,
-            pos_type=pos_type,
+            pos_type=self.pos_type,
         )
 
         self.atoms[atom_key] = atom
@@ -320,12 +294,12 @@ class AtomPool():
 
     def check_atom_consequent(
         self,
-        c_type,
-        context,
-        bigger,
-        target,
-        position,
-    ):
+        c_type: str,
+        context: str,
+        bigger: bool,
+        target: str,
+        position: int=0,
+    ) -> Tuple[list, int, np.array]:
         """
         Obtain empirical consequent, number of satisfying instances,
         and their ids for given atom info.
@@ -354,7 +328,7 @@ class AtomPool():
             else:
                 ids = np.where(self.train_x[:, feature_id] < target)[0]
         else:
-            assert 0
+            raise ValueError(f'Context type {c_type} is not supported.')
 
         n = len(ids)
         count = Counter(self.train_y[ids])
@@ -368,8 +342,8 @@ class AtomPool():
 
     def check_atoms(
         self,
-        x_,
-    ):
+        x_: np.array,
+    ) -> List[int]:
         """
         Check if given x_ satisfies the atoms in this pool.
         """
@@ -377,7 +351,9 @@ class AtomPool():
 
         return result
 
-    def get_atom_consequent(self):
+    def get_atom_consequent(
+        self
+    ) -> np.array:
         """
         Get consequents of atoms in this pool.
         """
@@ -386,7 +362,9 @@ class AtomPool():
 
         return np.array(ret)
 
-    def get_coverage_atom(self):
+    def get_coverage_atom(
+        self
+    ) -> np.array:
         """
         Get coverages of atoms in this pool.
         """
@@ -397,7 +375,7 @@ class AtomPool():
 
     def num_atoms(
         self,
-    ):
+    ) -> int:
         """
         Get total number of atoms in this pool.
         """
@@ -405,7 +383,7 @@ class AtomPool():
 
     def display_atoms(
         self,
-        n_display=0,
+        n_display: int=0,
     ):
         """
         Display info of atoms in this pool.
@@ -414,3 +392,41 @@ class AtomPool():
             atom.display()
             if n_display > 0 and i==n_display:
                 break
+
+def get_true_matrix(
+    atom_pool: object
+) -> torch.Tensor:
+    """
+    Get "true matrix" for given atom pool.
+    """
+    num_atoms = atom_pool.num_atoms()
+    satis_dict = atom_pool.atom_satis_dict
+    targets = atom_pool.atoms
+
+    true_matrix = np.zeros((num_atoms, atom_pool.n_data))
+
+    for atom_index, satis in tqdm(satis_dict.items()):
+        atom = targets[atom_index]
+        for instance in satis:
+            true_matrix[atom.atom_idx, instance] = 1
+
+    return torch.Tensor(true_matrix).float().detach()
+
+def get_word_count(
+    df: pd.DataFrame,
+    tokenizer: object,
+    pos_type: List[str],
+) -> np.array:
+    """
+    Get word count of given data.
+    """
+    word_count = np.zeros((len(df), len(pos_type) * tokenizer.vocab_size))
+    for pos, col in enumerate(pos_type):
+        for i, instance in enumerate(df[col]):
+            tokens = tokenizer.tokenize(instance)
+            counter = Counter(tokens)
+
+            for token, count in counter.items():
+                word_count[i, pos * tokenizer.vocab_size + token] = count
+
+    return word_count

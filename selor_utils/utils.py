@@ -6,7 +6,9 @@ import random
 import numpy as np
 import torch
 
-def reset_seed(seed=7):
+def reset_seed(
+    seed: int=7
+):
     """
     Reset the random variables with the given seed.
     """
@@ -16,7 +18,9 @@ def reset_seed(seed=7):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def parse_arguments(notebook=False):
+def parse_arguments(
+    notebook: bool=False
+) -> object:
     """
     Parse the arguments
     """

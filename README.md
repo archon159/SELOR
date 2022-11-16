@@ -2,16 +2,13 @@
 
 This repository is the official implementation of **S**elf-**E**xplaining deep models with **LO**gic rule **R**easoning.
 
-## Requirements
-numpy==1.21.6
-
-scikit-learn==0.24.2
-
-torch==1.9.0+cu111
-
-tqdm==4.62.3
-
-pandas==1.1.4
+## Environment Setup
+Hardware
+>Intel(R) Xeon(R) Platinum 8268 CPU @ 2.90GHz with 376GB RAM
+Operating System
+>CentOS Linux release 7.9.2009
+Python Version
+>3.7
 
 ## Datasets
 Yelp Review Polarity (Kaggle)
@@ -54,3 +51,6 @@ python3 selor.py --dataset <DATASET> --base_model <BASE_MODEL> --gpu <GPU> --onl
 
 ## Result
 This will be updated soon.
+
+## Trademarks
+This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft trademarks or logos is subject to and must follow [Microsoft’s Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general). Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship. Any use of third-party trademarks or logos are subject to those third-party’s policies.

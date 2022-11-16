@@ -1,6 +1,7 @@
 """
 The module that contains utility functions and classes related to datasets
 """
+from typing import Dict, List, Tuple
 import math
 import functools
 import operator
@@ -18,17 +19,380 @@ NLP_BASE = ['bert', 'roberta']
 TAB_DATASET = ['adult']
 TAB_BASE = ['dnn']
 
-def multi_and(target_list):
+class YelpDataset(Dataset):
+    """
+    Dataset structure for Yelp data
+    """
+    def __init__(
+        self,
+        data_df: pd.DataFrame,
+        atom_pool: object=None,
+        atom_tokenizer: object=None,
+        tf_tokenizer: object=None,
+        max_len: int=512,
+    ):
+        self.text = data_df['text']
+        self.y = data_df['label'].astype(dtype='int64')
+        self.atom_pool = atom_pool
+        self.atom_tokenizer = atom_tokenizer
+        self.tf_tokenizer = tf_tokenizer
+        self.max_len = max_len
+
+    def __len__(
+        self
+    ) -> int:
+        return len(self.y)
+
+    def __getitem__(
+        self,
+        i=int
+    ) -> Tuple[Tuple[torch.Tensor, ...], int]:
+        encoding = self.tf_tokenizer.encode_plus(
+            text=self.text[i],
+            add_special_tokens=True,
+            max_length=self.max_len,
+            return_token_type_ids=False,
+            padding='max_length',
+            return_attention_mask=True,
+            return_tensors='pt',
+            truncation=True,
+        )
+
+        input_ids = encoding['input_ids']
+        attention_mask = encoding['attention_mask']
+
+        input_ids = input_ids.squeeze(dim=0).long()
+        attention_mask = attention_mask.squeeze(dim=0).long()
+
+        if self.atom_pool is not None:
+            text_ = np.zeros(self.atom_tokenizer.vocab_size)
+            x_count = Counter(self.atom_tokenizer.tokenize(self.text[i]))
+
+            for word, count in dict(x_count).items():
+                text_[word] = count
+
+            # x_ indicates if the satisfaction of atoms for current sample
+            x_ = self.atom_pool.check_atoms(text_)
+
+            x_ = torch.Tensor(x_).long()
+        else:
+            x_ = torch.Tensor([0]).long()
+        y = self.y[i]
+
+        return (input_ids, attention_mask, x_), y
+
+class ClickbaitDataset(Dataset):
+    """
+    Dataset structure for clickbait data
+    """
+    def __init__(
+        self,
+        data_df: pd.DataFrame,
+        atom_pool: object,
+        atom_tokenizer: object,
+        tf_tokenizer: object,
+        max_len: int=512
+    ):
+        self.title = data_df['title']
+        self.text = data_df['text']
+        self.y = data_df['label'].astype(dtype='int64')
+        self.atom_pool = atom_pool
+        self.tf_tokenizer = tf_tokenizer
+        self.atom_tokenizer = atom_tokenizer
+        self.max_len = max_len
+
+        print(f"Data Num: {len(self.y)}")
+
+    def __len__(
+        self
+    ) -> int:
+        return len(self.y)
+
+    def __getitem__(
+        self,
+        i=int
+    ) -> Tuple[Tuple[torch.Tensor, ...], int]:
+        encoding = self.tf_tokenizer.encode_plus(
+            text=self.title[i],
+            text_pair=self.text[i],
+            add_special_tokens=True,
+            max_length=self.max_len,
+            return_token_type_ids=False,
+            padding='max_length',
+            return_attention_mask=True,
+            return_tensors='pt',
+            truncation=True,
+        )
+
+        input_ids = encoding['input_ids']
+        attention_mask = encoding['attention_mask']
+
+        input_ids = input_ids.squeeze(dim=0).long()
+        attention_mask = attention_mask.squeeze(dim=0).long()
+
+        if self.atom_pool is not None:
+            title_ = np.zeros(self.atom_tokenizer.vocab_size)
+            x_count_title = Counter(self.atom_tokenizer.tokenize(self.title[i]))
+
+            for word, count in dict(x_count_title).items():
+                title_[word] = count
+
+            text_ = np.zeros(self.atom_tokenizer.vocab_size)
+            x_count_text = Counter(self.atom_tokenizer.tokenize(self.text[i]))
+
+            for word, count in dict(x_count_text).items():
+                text_[word] = count
+
+            article_ = np.concatenate((title_, text_))
+
+            x_ = self.atom_pool.check_atoms(article_)
+            x_ = torch.Tensor(x_).long()
+        else:
+            x_ = torch.Tensor([0]).long()
+        y = self.y[i]
+
+        return (input_ids, attention_mask, x_), y
+
+class AdultDataset(Dataset):
+    """
+    Dataset structure for adult data
+    """
+    def __init__(
+        self,
+        data_df: pd.DataFrame,
+        atom_pool: object,
+    ):
+        self.x = data_df.drop(columns=['income'])
+        self.y = data_df['income'].astype(dtype='int64')
+        self.atom_pool = atom_pool
+
+        print(f"Data Num: {len(self.y)}")
+
+    def __len__(
+        self
+    ):
+        return len(self.y)
+
+    def __getitem__(
+        self,
+        i=int
+    ) -> Tuple[Tuple[torch.Tensor, ...], int]:
+        x_dummy = self.x.loc[i]
+        x = torch.Tensor(x_dummy).float()
+
+        if self.atom_pool is not None:
+            x_ = self.atom_pool.check_atoms(np.array(x_dummy))
+            x_ = torch.Tensor(x_).long()
+        else:
+            x_ = torch.Tensor([0]).long()
+        y = self.y[i]
+
+        return (x, x_), y
+
+
+class ClassSamples:
+    """
+    Class to count the number of samples in each class for initialization of pretraining datasets
+    """
+    def __init__(
+        self,
+        class_idx: int,
+        need: int,
+    ):
+        self.class_idx = class_idx
+        self.num_samples = 0
+        self.need = need
+        self.done = False
+
+        self.x = []
+        self.mu = []
+        self.sigma = []
+        self.n = []
+
+    def add(
+        self,
+        x: torch.Tensor,
+        mu: torch.Tensor,
+        sigma: torch.Tensor,
+        n: torch.Tensor,
+    ):
+        """
+        Add multiple samples.
+        """
+        self.x.append(x)
+        self.mu.append(mu)
+        self.sigma.append(sigma)
+        self.n.append(n)
+
+        self.num_samples += len(x)
+        if self.num_samples >= self.need:
+            self.x = torch.cat(self.x)
+            self.mu = torch.cat(self.mu)
+            self.sigma = torch.cat(self.sigma)
+            self.n = torch.cat(self.n)
+
+            self.x = self.x[:self.need]
+            self.mu = self.mu[:self.need]
+            self.sigma = self.sigma[:self.need]
+            self.n = self.n[:self.need]
+
+            self.num_samples = self.need
+
+        if self.num_samples == self.need:
+            self.done=True
+
+
+class PretrainDataset(Dataset):
+    """
+    Dataset structure for pretraining consequent estimator
+    """
+    def __init__(
+        self,
+        candidate: torch.Tensor,
+        true_matrix: torch.Tensor,
+        train_y: torch.Tensor,
+        n_sample: int,
+        num_classes: int=2,
+        min_df: int=200,
+        max_df: float=0.95,
+    ):
+        self.n_atom, self.n_data = true_matrix.shape
+        self.n_candidate, self.antecedent_len = candidate.shape
+        self.num_classes = num_classes
+
+        self.x = []
+        self.mu = []
+        self.sigma = []
+        self.n = []
+
+        with torch.no_grad():
+            if self.antecedent_len == 1:
+                self.x = candidate
+                self.mu, self.sigma, self.n = self.__get_answer__(
+                    candidate,
+                    true_matrix,
+                    train_y
+                )
+            else:
+                assert n_sample % num_classes == 0
+                bsz = n_sample
+                n_batch = math.ceil(self.n_candidate / bsz)
+
+                sample_dict = {}
+                for i in range(num_classes):
+                    sample_dict[i] = ClassSamples(
+                        class_idx=i,
+                        need=(n_sample // num_classes),
+                    )
+
+                pbar = tqdm(range(n_sample))
+
+                b_cnt = 0
+                while not multi_and([sample_dict[i].done for i in range(num_classes)]):
+                    start = (b_cnt % n_batch) * bsz
+                    end = min(start + bsz, self.n_candidate)
+                    b_cnt += 1
+
+                    cand = candidate[start:end]
+                    mu, sigma, n = self.__get_answer__(
+                        cand,
+                        true_matrix,
+                        train_y
+                    )
+
+                    max_value, max_index = torch.max(mu, dim=1)
+
+                    min_df_mask = (n >= min_df)
+                    max_df_mask = (n <= (max_df * self.n_data))
+                    uniform_prob_mask = (max_value != (1 / num_classes))
+                    mask = min_df_mask & max_df_mask & uniform_prob_mask
+
+                    for i in range(num_classes):
+                        if not sample_dict[i].done:
+                            bef = sample_dict[i].num_samples
+                            class_mask = mask & (max_index==i)
+                            sample_dict[i].add(
+                                cand[class_mask],
+                                mu[class_mask],
+                                sigma[class_mask],
+                                n[class_mask]
+                            )
+                            aft = sample_dict[i].num_samples
+                            pbar.update(aft-bef)
+
+                pbar.close()
+
+                self.x = torch.cat([sample_dict[i].x for i in range(num_classes)])
+                self.mu = torch.cat([sample_dict[i].mu for i in range(num_classes)])
+                self.sigma = torch.cat([sample_dict[i].sigma for i in range(num_classes)])
+                self.n = torch.cat([sample_dict[i].n for i in range(num_classes)])
+
+                assert len(self.x) == len(self.mu) == len(self.sigma) == len(self.n) == n_sample
+
+                rand_idx = torch.randperm(n_sample, device=candidate.device)
+
+                self.x = self.x[rand_idx]
+                self.mu = self.mu[rand_idx]
+                self.sigma = self.sigma[rand_idx]
+                self.n = self.n[rand_idx]
+
+        self.x = self.x.cpu()
+        self.mu = self.mu.cpu()
+        self.sigma = self.sigma.cpu()
+        self.n = self.n.cpu()
+
+    def __get_answer__(
+        self,
+        candidate: torch.Tensor,
+        true_matrix: torch.Tensor,
+        train_y: torch.Tensor
+    ) -> Tuple[torch.Tensor, ...]:
+        bsz, _ = candidate.shape
+        target = torch.index_select(true_matrix, 0, candidate.flatten())
+        target = target.reshape(bsz, self.antecedent_len, self.n_data)
+
+        satis_num = torch.sum(target, dim=1)
+        satis_mask = (satis_num == self.antecedent_len)
+
+        n = torch.sum(satis_mask, dim=1)
+
+        mu = []
+        sigma = []
+        for mask in satis_mask:
+            satis_ans = train_y[mask]
+            satis_ans = F.one_hot(satis_ans.long(), num_classes=self.num_classes).float()
+            mu.append(torch.mean(satis_ans, dim=0))
+            sigma.append(torch.std(satis_ans, dim=0, unbiased=False))
+
+        mu = torch.stack(mu)
+        sigma = torch.stack(sigma)
+
+        return mu, sigma, n
+
+    def __len__(
+        self
+    ) -> int:
+        return len(self.x)
+
+    def __getitem__(
+        self,
+        i=int
+    ) -> Tuple[torch.Tensor, ...]:
+        return self.x[i], self.mu[i], self.sigma[i], self.n[i]
+
+def multi_and(
+    target_list: List[bool]
+) -> bool:
     """
     Returns the result of & operator between elements of the given list.
     """
     return functools.reduce(operator.and_, target_list)
 
 def load_data(
-    dataset='yelp',
-    data_dir='./data/',
-    seed=7,
-):
+    dataset: str='yelp',
+    data_dir: str='./data/',
+    seed: int=7,
+) -> Tuple[pd.DataFrame, ...]:
     """
     Load data and split into train, valid, test dataset.
     """
@@ -113,7 +477,7 @@ def load_data(
         )
 
     else:
-        assert 0
+        raise ValueError(f'Dataset {dataset} is not supported.')
 
     train_df, valid_df, test_df = [
         df.reset_index(
@@ -122,7 +486,9 @@ def load_data(
 
     return train_df, valid_df, test_df
 
-def get_dataset_type(dataset='yelp'):
+def get_dataset_type(
+    dataset: str='yelp'
+) -> str:
     """
     Return the type of the dataset.
     """
@@ -131,11 +497,13 @@ def get_dataset_type(dataset='yelp'):
     elif dataset in TAB_DATASET:
         ret = 'tab'
     else:
-        raise NotImplementedError(f'Dataset {dataset} is not supported.')
+        raise ValueError(f'Dataset {dataset} is not supported.')
 
     return ret
 
-def get_base_type(base='bert'):
+def get_base_type(
+    base: str='bert'
+) -> str:
     """
     Return the type of the base model.
     """
@@ -144,11 +512,13 @@ def get_base_type(base='bert'):
     elif base in TAB_BASE:
         ret = 'tab'
     else:
-        raise NotImplementedError(f'Base model {base} is not supported.')
+        raise ValueError(f'Base model {base} is not supported.')
 
     return ret
 
-def get_label_column(dataset='yelp'):
+def get_label_column(
+    dataset: str='yelp'
+) -> str:
     """
     Return the label column of the dataset.
     """
@@ -159,11 +529,13 @@ def get_label_column(dataset='yelp'):
     elif dataset == 'adult':
         label = 'income'
     else:
-        raise NotImplementedError(f'Dataset {dataset} is not supported.')
+        raise ValueError(f'Dataset {dataset} is not supported.')
 
     return label
 
-def get_context_columns(dataset='yelp'):
+def get_context_columns(
+    dataset: str='yelp'
+) -> List[str]:
     """
     Return the context columns of the dataset.
     This also can be used as position indicator.
@@ -176,11 +548,13 @@ def get_context_columns(dataset='yelp'):
         categorical_x_col, numerical_x_col, _ = get_tabular_column_type(dataset)
         cols = categorical_x_col + numerical_x_col
     else:
-        raise NotImplementedError(f'Dataset {dataset} is not supported.')
+        raise ValueError(f'Dataset {dataset} is not supported.')
 
     return cols
 
-def get_class_names(dataset='yelp'):
+def get_class_names(
+    dataset: str='yelp'
+) -> List[str]:
     """
     Return the class names of the dataset.
     """
@@ -191,14 +565,16 @@ def get_class_names(dataset='yelp'):
     elif dataset == 'adult':
         class_names = ['<=50K', '>50K']
     else:
-        raise NotImplementedError(f'Dataset {dataset} is not supported.')
+        raise ValueError(f'Dataset {dataset} is not supported.')
 
     # For extensibility
     class_names = [str(c) for c in class_names]
 
     return class_names
 
-def get_tabular_column_type(dataset='adult'):
+def get_tabular_column_type(
+    dataset: str='adult'
+) -> List[str]:
     """
     Return the type of columns for the tabular dataset.
     """
@@ -207,16 +583,21 @@ def get_tabular_column_type(dataset='adult'):
             'workclass', 'education', 'marital-status', 'occupation', 'relationship', 'race',
             'gender', 'native-country'
         ]
+
         numerical_x_col = [
             'age', 'fnlwgt', 'educational-num', 'capital-gain', 'capital-loss', 'hours-per-week'
         ]
+
         y_col = ['income']
     else:
-        raise NotImplementedError(f'Dataset {dataset} is not supported.')
+        raise ValueError(f'Dataset {dataset} is not supported.')
 
     return categorical_x_col, numerical_x_col, y_col
 
-def get_tabular_category_map(data_df, dataset='adult'):
+def get_tabular_category_map(
+    data_df: pd.DataFrame,
+    dataset: str='adult'
+) -> Dict[str, str]:
     """
     Return the category map that maps string-like categories to index
     """
@@ -237,7 +618,11 @@ def get_tabular_category_map(data_df, dataset='adult'):
 
     return cat_map
 
-def numerize_tabular_data(data_df, cat_map, dataset='adult'):
+def numerize_tabular_data(
+    data_df: pd.DataFrame,
+    cat_map: Dict[str, str],
+    dataset: str='adult'
+) -> pd.DataFrame:
     """
     Convert the given dataframe.
     Categorical column would become index from string,
@@ -260,7 +645,11 @@ def numerize_tabular_data(data_df, cat_map, dataset='adult'):
 
     return data_df
 
-def get_tabular_numerical_threshold(data_df, dataset='adult', interval=4):
+def get_tabular_numerical_threshold(
+    data_df: pd.DataFrame,
+    dataset: str='adult',
+    interval: int=4
+) -> Dict[str, list]:
     """
     Get thresholds to create atoms for each column of the tabular dataset.
     """
@@ -280,11 +669,14 @@ def get_tabular_numerical_threshold(data_df, dataset='adult', interval=4):
                 percent = i * (100 / interval)
                 numerical_threshold[col].append(np.percentile(target, percent))
     else:
-        raise NotImplementedError(f'Dataset {dataset} is not supported.')
+        raise ValueError(f'Dataset {dataset} is not supported.')
 
     return numerical_threshold
 
-def get_tabular_numerical_max(data_df, dataset='adult'):
+def get_tabular_numerical_max(
+    data_df: pd.DataFrame,
+    dataset: str='adult'
+) -> Dict[str, float]:
     """
     Get the maximum value for each column of the tabular dataset.
     """
@@ -296,14 +688,14 @@ def get_tabular_numerical_max(data_df, dataset='adult'):
             numerical_max[col] = data_df[col].describe()['max']
 
     else:
-        raise NotImplementedError(f'Dataset {dataset} is not supported.')
+        raise ValueError(f'Dataset {dataset} is not supported.')
 
     return numerical_max
 
 def load_tabular_info(
-    dataset='adult',
-    data_dir='./data/'
-):
+    dataset: str='adult',
+    data_dir: str='./data/'
+) -> Tuple[Dict[str, str], Dict[str, list], Dict[str, float]]:
     """
     Returns the data structures that contains information of the tabular dataset.
     """
@@ -312,7 +704,7 @@ def load_tabular_info(
     if dataset=='adult':
         data_df = pd.read_csv(f'{data_path}/adult.csv')
     else:
-        raise NotImplementedError(f'Dataset {dataset} is not supported as a tabular dataset.')
+        raise ValueError(f'Dataset {dataset} is not supported.')
 
     cat_map = get_tabular_category_map(data_df, dataset)
     numerical_threshold = get_tabular_numerical_threshold(data_df, dataset=dataset)
@@ -321,13 +713,13 @@ def load_tabular_info(
     return cat_map, numerical_threshold, numerical_max
 
 def create_dataset(
-    data_df,
-    dataset='yelp',
-    atom_pool=None,
-    atom_tokenizer=None,
-    tf_tokenizer=None,
-    config=None,
-):
+    data_df: pd.DataFrame,
+    dataset: str='yelp',
+    atom_pool: object=None,
+    atom_tokenizer: object=None,
+    tf_tokenizer: object=None,
+    config: object=None,
+) -> object:
     """
     Create a dataset with the given dataframe.
     """
@@ -353,16 +745,16 @@ def create_dataset(
             atom_pool=atom_pool
         )
     else:
-        raise NotImplementedError(f'Dataset {dataset} is not supported.')
+        raise ValueError(f'Dataset {datasete} is not supported.')
 
     return ret
 
 def create_dataloader(
-    dataset,
-    batch_size,
-    num_workers,
-    shuffle
-):
+    dataset: object,
+    batch_size: int,
+    num_workers: int,
+    shuffle: bool
+) -> object:
     """
     Create a dataloader with the given dataset.
     """
@@ -376,13 +768,13 @@ def create_dataloader(
     )
 
 def get_single_input(
-    target,
-    dataset,
-    atom_pool,
-    tf_tokenizer=None,
-    atom_tokenizer=None,
-    max_len=512,
-):
+    target: pd.DataFrame,
+    dataset: str,
+    atom_pool: object,
+    tf_tokenizer: object=None,
+    atom_tokenizer: object=None,
+    max_len: int=512,
+) -> Tuple[torch.Tensor, ...]:
     """
     Get a single input for given instance.
     Used to get an explanation of a single instance.
@@ -456,165 +848,10 @@ def get_single_input(
 
     return ret
 
-class YelpDataset(Dataset):
-    """
-    Dataset structure for Yelp data
-    """
-    def __init__(
-        self,
-        data_df,
-        atom_pool=None,
-        atom_tokenizer=None,
-        tf_tokenizer=None,
-        max_len=512,
-    ):
-        self.text = data_df['text']
-        self.y = data_df['label'].astype(dtype='int64')
-        self.atom_pool = atom_pool
-        self.atom_tokenizer = atom_tokenizer
-        self.tf_tokenizer = tf_tokenizer
-        self.max_len = max_len
-
-    def __len__(self):
-        return len(self.y)
-
-    def __getitem__(self, i):
-        encoding = self.tf_tokenizer.encode_plus(
-            text=self.text[i],
-            add_special_tokens=True,
-            max_length=self.max_len,
-            return_token_type_ids=False,
-            padding='max_length',
-            return_attention_mask=True,
-            return_tensors='pt',
-            truncation=True,
-        )
-
-        input_ids = encoding['input_ids']
-        attention_mask = encoding['attention_mask']
-
-        input_ids = input_ids.squeeze(dim=0).long()
-        attention_mask = attention_mask.squeeze(dim=0).long()
-
-        if self.atom_pool is not None:
-            text_ = np.zeros(self.atom_tokenizer.vocab_size)
-            x_count = Counter(self.atom_tokenizer.tokenize(self.text[i]))
-
-            for word, count in dict(x_count).items():
-                text_[word] = count
-
-            # x_ indicates if the satisfaction of atoms for current sample
-            x_ = self.atom_pool.check_atoms(text_)
-
-            x_ = torch.Tensor(x_).long()
-        else:
-            x_ = torch.Tensor([0]).long()
-        y = self.y[i]
-
-        return (input_ids, attention_mask, x_), y
-
-class ClickbaitDataset(Dataset):
-    """
-    Dataset structure for clickbait data
-    """
-    def __init__(
-        self,
-        data_df,
-        atom_pool,
-        atom_tokenizer,
-        tf_tokenizer,
-        max_len=512
-    ):
-        self.title = data_df['title']
-        self.text = data_df['text']
-        self.y = data_df['label'].astype(dtype='int64')
-        self.atom_pool = atom_pool
-        self.tf_tokenizer = tf_tokenizer
-        self.atom_tokenizer = atom_tokenizer
-        self.max_len = max_len
-
-        print(f"Data Num: {len(self.y)}")
-
-    def __len__(self):
-        return len(self.y)
-
-    def __getitem__(self, i):
-        encoding = self.tf_tokenizer.encode_plus(
-            text=self.title[i],
-            text_pair=self.text[i],
-            add_special_tokens=True,
-            max_length=self.max_len,
-            return_token_type_ids=False,
-            padding='max_length',
-            return_attention_mask=True,
-            return_tensors='pt',
-            truncation=True,
-        )
-
-        input_ids = encoding['input_ids']
-        attention_mask = encoding['attention_mask']
-
-        input_ids = input_ids.squeeze(dim=0).long()
-        attention_mask = attention_mask.squeeze(dim=0).long()
-
-        if self.atom_pool is not None:
-            title_ = np.zeros(self.atom_tokenizer.vocab_size)
-            x_count_title = Counter(self.atom_tokenizer.tokenize(self.title[i]))
-
-            for word, count in dict(x_count_title).items():
-                title_[word] = count
-
-            text_ = np.zeros(self.atom_tokenizer.vocab_size)
-            x_count_text = Counter(self.atom_tokenizer.tokenize(self.text[i]))
-
-            for word, count in dict(x_count_text).items():
-                text_[word] = count
-
-            article_ = np.concatenate((title_, text_))
-
-            x_ = self.atom_pool.check_atoms(article_)
-            x_ = torch.Tensor(x_).long()
-        else:
-            x_ = torch.Tensor([0]).long()
-        y = self.y[i]
-
-        return (input_ids, attention_mask, x_), y
-
-class AdultDataset(Dataset):
-    """
-    Dataset structure for adult data
-    """
-    def __init__(
-        self,
-        data_df,
-        atom_pool,
-    ):
-        self.x = data_df.drop(columns=['income'])
-        self.y = data_df['income'].astype(dtype='int64')
-        self.atom_pool = atom_pool
-
-        print(f"Data Num: {len(self.y)}")
-
-    def __len__(self):
-        return len(self.y)
-
-    def __getitem__(self, i):
-        x_dummy = self.x.loc[i]
-        x = torch.Tensor(x_dummy).float()
-
-        if self.atom_pool is not None:
-            x_ = self.atom_pool.check_atoms(x_dummy)
-            x_ = torch.Tensor(x_).long()
-        else:
-            x_ = torch.Tensor([0]).long()
-        y = self.y[i]
-
-        return (x, x_), y
-
 def get_weight(
-    pretrain_dataset,
-    n_data,
-):
+    pretrain_dataset: object,
+    n_data: int,
+) -> Tuple[torch.Tensor, ...]:
     """
     Get weight between losses for pretraining consequent estimator.
     """
@@ -629,14 +866,14 @@ def get_weight(
     return w_mu, w_sigma, w_coverage
 
 def create_pretrain_dataset(
-    candidate,
-    true_matrix,
-    train_y,
-    n_sample,
-    num_classes=2,
-    min_df=200,
-    max_df=0.95,
-):
+    candidate: torch.Tensor,
+    true_matrix: torch.Tensor,
+    train_y: torch.Tensor,
+    n_sample: int,
+    num_classes: int=2,
+    min_df: int=200,
+    max_df: float=0.95,
+) -> object:
     """
     Create a dataset for pretraining consequent estimator with given antecedent candidates.
     """
@@ -653,12 +890,12 @@ def create_pretrain_dataset(
     return p_ds
 
 def create_pretrain_dataloader(
-    pretrain_dataset,
-    batch_size,
-    num_workers,
-    test_ratio=0.2,
-    seed=7,
-):
+    pretrain_dataset: object,
+    batch_size: int,
+    num_workers: int,
+    test_ratio: float=0.2,
+    seed: int=7,
+) -> Tuple[object, ...]:
     """
     Create a dataloader for pretraining consequent estimator with given dataset.
     """
@@ -688,207 +925,3 @@ def create_pretrain_dataloader(
     )
 
     return train_dataloader, test_dataloader
-
-class ClassSamples():
-    """
-    Class to count the number of samples in each class for initialization of pretraining datasets
-    """
-    def __init__(
-        self,
-        class_idx,
-        need,
-    ):
-        self.class_idx = class_idx
-        self.num_samples = 0
-        self.need = need
-        self.done = False
-
-        self.x = []
-        self.mu = []
-        self.sigma = []
-        self.n = []
-
-    def add(
-        self,
-        x,
-        mu,
-        sigma,
-        n,
-    ):
-        """
-        Add a sample.
-        """
-        self.x.append(x)
-        self.mu.append(mu)
-        self.sigma.append(sigma)
-        self.n.append(n)
-
-        self.num_samples += 1
-        if self.num_samples == self.need:
-            self.done=True
-
-    def add_multiple(
-        self,
-        x,
-        mu,
-        sigma,
-        n,
-    ):
-        """
-        Add multiple samples.
-        """
-        self.x.append(x)
-        self.mu.append(mu)
-        self.sigma.append(sigma)
-        self.n.append(n)
-
-        self.num_samples += len(x)
-        if self.num_samples >= self.need:
-            self.x = torch.cat(self.x)
-            self.mu = torch.cat(self.mu)
-            self.sigma = torch.cat(self.sigma)
-            self.n = torch.cat(self.n)
-
-            self.x = self.x[:self.need]
-            self.mu = self.mu[:self.need]
-            self.sigma = self.sigma[:self.need]
-            self.n = self.n[:self.need]
-
-            self.num_samples = self.need
-
-        if self.num_samples == self.need:
-            self.done=True
-
-
-class PretrainDataset(Dataset):
-    """
-    Dataset structure for pretraining consequent estimator
-    """
-    def __init__(
-        self,
-        candidate,
-        true_matrix,
-        train_y,
-        n_sample,
-        num_classes=2,
-        min_df=200,
-        max_df=0.95,
-    ):
-        self.n_atom, self.n_data = true_matrix.shape
-        self.n_candidate, self.antecedent_len = candidate.shape
-        self.num_classes = num_classes
-
-        self.x = []
-        self.mu = []
-        self.sigma = []
-        self.n = []
-
-        with torch.no_grad():
-            if self.antecedent_len == 1:
-                self.x = candidate
-                self.mu, self.sigma, self.n = self.__get_answer__(
-                    candidate,
-                    true_matrix,
-                    train_y
-                )
-            else:
-                assert n_sample % num_classes == 0
-                bsz = n_sample
-                n_batch = math.ceil(self.n_candidate / bsz)
-
-                sample_dict = {}
-                for i in range(num_classes):
-                    sample_dict[i] = ClassSamples(
-                        class_idx=i,
-                        need=(n_sample // num_classes),
-                    )
-
-                pbar = tqdm(range(n_sample))
-
-                b_cnt = 0
-                while not multi_and([sample_dict[i].done for i in range(num_classes)]):
-                    start = (b_cnt % n_batch) * bsz
-                    end = min(start + bsz, self.n_candidate)
-                    b_cnt += 1
-
-                    cand = candidate[start:end]
-                    mu, sigma, n = self.__get_answer__(
-                        cand,
-                        true_matrix,
-                        train_y
-                    )
-
-                    max_value, max_index = torch.max(mu, dim=1)
-
-                    min_df_mask = (n >= min_df)
-                    max_df_mask = (n <= (max_df * self.n_data))
-                    uniform_prob_mask = (max_value != (1 / num_classes))
-                    mask = min_df_mask & max_df_mask & uniform_prob_mask
-
-                    for i in range(num_classes):
-                        if not sample_dict[i].done:
-                            bef = sample_dict[i].num_samples
-                            class_mask = mask & (max_index==i)
-                            sample_dict[i].add_multiple(
-                                cand[class_mask],
-                                mu[class_mask],
-                                sigma[class_mask],
-                                n[class_mask]
-                            )
-                            aft = sample_dict[i].num_samples
-                            pbar.update(aft-bef)
-
-                pbar.close()
-
-                self.x = torch.cat([sample_dict[i].x for i in range(num_classes)])
-                self.mu = torch.cat([sample_dict[i].mu for i in range(num_classes)])
-                self.sigma = torch.cat([sample_dict[i].sigma for i in range(num_classes)])
-                self.n = torch.cat([sample_dict[i].n for i in range(num_classes)])
-
-                assert len(self.x) == len(self.mu) == len(self.sigma) == len(self.n) == n_sample
-
-                rand_idx = torch.randperm(n_sample, device=candidate.device)
-
-                self.x = self.x[rand_idx]
-                self.mu = self.mu[rand_idx]
-                self.sigma = self.sigma[rand_idx]
-                self.n = self.n[rand_idx]
-
-        self.x = self.x.cpu()
-        self.mu = self.mu.cpu()
-        self.sigma = self.sigma.cpu()
-        self.n = self.n.cpu()
-
-    def __get_answer__(
-        self,
-        candidate,
-        true_matrix,
-        train_y
-    ):
-        bsz, _ = candidate.shape
-        target = torch.index_select(true_matrix, 0, candidate.flatten())
-        target = target.reshape(bsz, self.antecedent_len, self.n_data)
-
-        satis_num = torch.sum(target, dim=1)
-        satis_mask = (satis_num == self.antecedent_len)
-
-        n = torch.sum(satis_mask, dim=1)
-
-        mu = []
-        sigma = []
-        for mask in satis_mask:
-            satis_ans = train_y[mask]
-            satis_ans = F.one_hot(satis_ans.long(), num_classes=self.num_classes).float()
-            mu.append(torch.mean(satis_ans, dim=0))
-            sigma.append(torch.std(satis_ans, dim=0, unbiased=False))
-
-        mu = torch.stack(mu)
-        sigma = torch.stack(sigma)
-
-        return mu, sigma, n
-
-    def __len__(self):
-        return len(self.x)
-
-    def __getitem__(self, i):
-        return self.x[i], self.mu[i], self.sigma[i], self.n[i]

@@ -1,7 +1,7 @@
 """
 The script to build atom pools
 """
-import os
+from pathlib import Path
 import pickle
 import time
 from tqdm import tqdm
@@ -18,15 +18,12 @@ if __name__ == "__main__":
     dtype = ds.get_dataset_type(args.dataset)
     btype = ds.get_base_type(args.base)
 
-    assert dtype==btype
+    assert dtype == btype
 
     seed = args.seed
     utils.reset_seed(seed)
 
     train_df, valid_df, test_df = ds.load_data(dataset=args.dataset)
-
-    if args.save_dir not in os.listdir('.'):
-        os.system(f'mkdir ./{args.save_dir}')
 
     col_label = ds.get_label_column(args.dataset)
     train_y = np.array(train_df[col_label]).astype(int)
@@ -41,10 +38,11 @@ if __name__ == "__main__":
             dataset=args.dataset
         )
 
-        if 'atom_tokenizer' not in os.listdir(f'./{args.save_dir}'):
-            os.system(f'mkdir ./{args.save_dir}/atom_tokenizer')
-
-        with open(f'./{args.save_dir}/atom_tokenizer/atom_tokenizer_{args.dataset}.pkl', 'wb') as f:
+        atom_tokenizer_dir = Path(f'./{args.save_dir}/atom_tokenizer')
+        atom_tokenizer_dir.mkdir(parents=True, exist_ok=True)
+        atom_tokenizer_file = f'atom_tokenizer_{args.dataset}_seed_{args.seed}'
+        atom_tokenizer_path = atom_tokenizer_dir / atom_tokenizer_file
+        with open(str(atom_tokenizer_path), 'wb') as f:
             pickle.dump(atom_tokenizer, f, pickle.HIGHEST_PROTOCOL)
 
         print('Calculating word counts of train df')
@@ -65,11 +63,12 @@ if __name__ == "__main__":
         atom_tokenizer = None
         train_x = np.array(train_df.drop(columns=[col_label]))
         test_x = np.array(test_df.drop(columns=[col_label]))
-    else:
-        raise NotImplementedError("We only support NLP and tabular dataset now.")
 
-    if 'atom_pool' not in os.listdir(f'./{args.save_dir}'):
-        os.system(f'mkdir ./{args.save_dir}/atom_pool')
+    else:
+        raise ValueError(f'Dataset type {dtype} is not supported.')
+
+    atom_pool_dir = Path(f'./{args.save_dir}/atom_pool')
+    atom_pool_dir.mkdir(parents=True, exist_ok=True)
 
     # Build atom pool.
     if dtype == 'nlp':
@@ -78,6 +77,7 @@ if __name__ == "__main__":
             train_y,
             dtype=dtype,
             tokenizer=atom_tokenizer,
+            pos_type=pos_type,
         )
 
         # Sort by frequency
@@ -91,7 +91,6 @@ if __name__ == "__main__":
             bigger=None,
             target=None,
             position=None,
-            pos_type=None,
         )
 
         # Exclude meaningless tokens
@@ -128,7 +127,6 @@ if __name__ == "__main__":
                     bigger=True,
                     target=0.5,
                     position=pos,
-                    pos_type=pos_type,
                 )
 
                 cur_num_atoms += 1
@@ -141,11 +139,11 @@ if __name__ == "__main__":
 
         # For efficient memory use
         ap.train_x = None
-        ap.train_y = None
 
-        atom_pool_path = f'./{args.save_dir}/atom_pool/'
-        atom_pool_path += f'atom_pool_{args.dataset}_num_atoms_{args.num_atoms}.pkl'
-        with open(atom_pool_path, 'wb') as f:
+        atom_pool_file = f'atom_pool_{args.dataset}'
+        atom_pool_file += f'_num_atoms_{args.num_atoms}_seed_{args.seed}'
+        atom_pool_path = atom_pool_dir / atom_pool_file
+        with open(str(atom_pool_path), 'wb') as f:
             pickle.dump(ap, f, pickle.HIGHEST_PROTOCOL)
 
     elif dtype == 'tab':
@@ -160,6 +158,7 @@ if __name__ == "__main__":
             dtype=dtype,
             tabular_info=tabular_info,
             tabular_column_type=tabular_column_type,
+            pos_type=pos_type,
         )
 
         ap.add_atom(
@@ -172,13 +171,33 @@ if __name__ == "__main__":
         for cat in numerical_x_col:
             m = numerical_max[cat]
             for n in numerical_threshold[cat]:
-                ap.add_atom('numerical', cat, True, n / m)
-                ap.add_atom('numerical', cat, False, n / m)
+                ap.add_atom(
+                    c_type='numerical',
+                    context=cat,
+                    bigger=True,
+                    target=n/m
+                )
+                ap.add_atom(
+                    c_type='numerical',
+                    context=cat,
+                    bigger=False,
+                    target=n/m
+                )
 
         for cat in categorical_x_col:
             for k in cat_map[f'{cat}_idx2key']:
-                ap.add_atom('categorical', cat, True, k)
-                ap.add_atom('categorical', cat, False, k)
+                ap.add_atom(
+                    c_type='categorical',
+                    context=cat,
+                    bigger=True,
+                    target=k
+                )
+                ap.add_atom(
+                    c_type='categorical',
+                    context=cat,
+                    bigger=False,
+                    target=k
+                )
 
         ap.display_atoms()
         n_atom = ap.num_atoms()
@@ -186,12 +205,15 @@ if __name__ == "__main__":
 
         # For efficient memory use
         ap.train_x = None
-        ap.train_y = None
 
-        with open(f'./{args.save_dir}/atom_pool/atom_pool_{args.dataset}.pkl', 'wb') as f:
+        atom_pool_file = f'atom_pool_{args.dataset}'
+        atom_pool_file += f'_seed_{args.seed}'
+        atom_pool_path = atom_pool_dir / atom_pool_file
+
+        with open(str(atom_pool_path), 'wb') as f:
             pickle.dump(ap, f, pickle.HIGHEST_PROTOCOL)
     else:
-        raise NotImplementedError("We only support NLP and tabular dataset now.")
+        raise ValueError(f'Dataset type {dtype} is not supported.')
 
     build_end = time.time()
     print(f'Building time: {build_end - build_start} s')

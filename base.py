@@ -2,6 +2,7 @@
 The script to train base models
 """
 import os
+from pathlib import Path
 from datetime import datetime
 import torch
 from torch import nn
@@ -19,7 +20,7 @@ if __name__ == "__main__":
 
     dtype = ds.get_dataset_type(args.dataset)
     btype = ds.get_base_type(args.base)
-    assert dtype==btype
+    assert dtype == btype
 
     seed = args.seed
     gpu = torch.device(f'cuda:{args.gpu}')
@@ -61,7 +62,7 @@ if __name__ == "__main__":
         input_dim = train_dataset.x.shape[1]
         hidden_dim = args.hidden_dim
     else:
-        raise NotImplementedError("We only support NLP and tabular dataset now.")
+        raise ValueError(f'Dataset type {dtype} is not supported.')
 
     # Load class names
     class_names = ds.get_class_names(args.dataset)
@@ -77,28 +78,23 @@ if __name__ == "__main__":
 
     nll_loss_func = nn.NLLLoss(reduction='mean').to(gpu)
 
-    dir_prefix = f'{RUN}_{args.base}_dataset_{args.dataset}'
+    dir_prefix = f'{RUN}_{args.base}_dataset_{args.dataset}_seed_{args.seed}'
 
     if args.only_eval:
         targets = [d for d in os.listdir(f'./result/{RUN}') if d.startswith(dir_prefix)]
         dir_path = f'./result/{RUN}/{targets[-1]}'
         print(f'Directory Path: {dir_path}')
+        dir_path = Path(dir_path)
     else:
         now = datetime.now()
         cur_time = now.strftime("%y%m%d:%H:%M:%S")
 
-        if args.result_dir not in os.listdir('.'):
-            os.system(f'mkdir ./{args.result_dir}')
-
-        if RUN not in os.listdir('./result'):
-            os.system(f'mkdir ./result/{RUN}')
-
-        dir_path = f'./result/{RUN}/{dir_prefix}_seed_{args.seed}_{cur_time}'
+        dir_path = f'./{args.result_dir}/{RUN}/{dir_prefix}_{cur_time}'
         print(f'Directory Path: {dir_path}')
-
-        os.system(f'mkdir {dir_path}')
-        with open(f'{dir_path}/args', 'w', encoding="utf-8") as f:
-            print(args, file=f, flush=True)
+        dir_path = Path(dir_path)
+        dir_path.mkdir(parents=True, exist_ok=True)
+        arg_path = dir_path / 'args'
+        arg_path.write_text(f'{args}\n', encoding='utf-8')
 
         model = te.train(
             model=model,
@@ -114,8 +110,8 @@ if __name__ == "__main__":
             dir_path=dir_path
         )
 
-    best_model_path = f'{dir_path}/model_best.pt'
-    model.load_state_dict(torch.load(best_model_path, map_location=gpu))
+    best_model_path = dir_path / 'model_best.pt'
+    model.load_state_dict(torch.load(str(best_model_path), map_location=gpu))
 
     te.eval_model(
         model=model,
