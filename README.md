@@ -5,13 +5,18 @@ This repository is the official implementation of **S**elf-**E**xplaining deep m
 ## Environment Setup
 Hardware
 >Intel(R) Xeon(R) Platinum 8268 CPU @ 2.90GHz with 376GB RAM
+
 >NVIDIA A100 GPU with 40GB memory
+
 Operating System
 >CentOS Linux release 7.9.2009
+
 Python Version
 >3.7
+
 CUDA Version
 >11.0
+
 PyTorch Version
 >1.9.0
 
