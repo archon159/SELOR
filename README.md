@@ -36,13 +36,17 @@ Build the atom pool with the following command.
 ```
 python3 build_atom_pool.py --dataset <DATASET> --base_model <BASE_MODEL>
 ```
-Sample atoms to pretrain the consequent estimator with the following command.
+Sample atoms with the following command.
 ```
-python3 pretrain_consequent_estimator.py --dataset <DATASET> --base_model <BASE_MODEL> --gpu <GPU>
+python3 sample_antecedents.py --dataset <DATASET> --base <BASE_MODEL> --gpu <GPU>
+```
+Pretrain the consequent estimator using sampled atoms with the following command.
+```
+python3 pretrain_consequent_estimator.py --dataset <DATASET> --base <BASE_MODEL> --gpu <GPU>
 ```
 Train the SELOR model with the following command.
 ```
-python3 selor.py --dataset <DATASET> --base_model <BASE_MODEL> --gpu <GPU>
+python3 selor.py --dataset <DATASET> --base <BASE_MODEL> --gpu <GPU>
 ```
 
 ## Evaluation
