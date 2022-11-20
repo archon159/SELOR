@@ -89,6 +89,9 @@ class BaseModel(nn.Module):
         self,
         inputs: Tuple[torch.Tensor, ...]
     ) -> Tuple[torch.Tensor, ...]:
+        """
+        Base model forward propagation
+        """
         if self.base == 'dnn':
             x, _ = inputs
             h = self.linear_base(x)
@@ -154,6 +157,9 @@ class ConsequentEstimator(nn.Module):
         self,
         x: torch.Tensor,
     ) -> Tuple[torch.Tensor, ...]:
+        """
+        Consequent estimator forward propagation
+        """
         emb = torch.matmul(x, self.atom_embedding)
         out = self.cp_te(emb)
         out = torch.mean(out, dim=1)
@@ -208,18 +214,21 @@ class AtomSelector(nn.Module):
             x_[(pre_max_index==0), :] = 0.
             x_[:, 0] = 1.0
 
-        x[~(x_.bool())] = float('-inf')
+        x[torch.logical_not(x_)] = float('-inf')
         x = F.gumbel_softmax(logits=x, tau=1, hard=True, dim=1)
 
         return x
 
     def forward(
         self,
-        cls: torch.Tensor,
+        cls_emb: torch.Tensor,
         x_: torch.Tensor,
     ) -> torch.Tensor:
-        cls = cls.unsqueeze(dim=0).contiguous()
-        cur_input = cls
+        """
+        Antecedent generator forward propagation
+        """
+        cls_emb = cls_emb.unsqueeze(dim=0).contiguous()
+        cur_input = cls_emb
         cur_h_0 = None
 
         atom_prob = []
@@ -249,7 +258,7 @@ class AtomSelector(nn.Module):
             max_index = torch.max(prob, dim=-1)[1]
 
             atom_wsum = torch.mm(prob, self.atom_embedding.detach())
-            cur_input = cls + atom_wsum.unsqueeze(dim=0)
+            cur_input = cls_emb + atom_wsum.unsqueeze(dim=0)
 
         atom_prob = torch.stack(atom_prob, dim=1)
 

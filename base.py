@@ -1,7 +1,6 @@
 """
 The script to train base models
 """
-import os
 from pathlib import Path
 from datetime import datetime
 import torch
@@ -81,17 +80,16 @@ if __name__ == "__main__":
     dir_prefix = f'{RUN}_{args.base}_dataset_{args.dataset}_seed_{args.seed}'
 
     if args.only_eval:
-        targets = [d for d in os.listdir(f'./result/{RUN}') if d.startswith(dir_prefix)]
-        dir_path = f'./result/{RUN}/{targets[-1]}'
-        print(f'Directory Path: {dir_path}')
-        dir_path = Path(dir_path)
+        result_path = Path(f'./{args.result_dir}/{RUN}')
+        targets = [d for d in result_path.iterdir() if d.name.startswith(dir_prefix)]
+        dir_path = Path(f'{targets[-1]}')
+        print(f'Directory Path: {str(dir_path)}')
     else:
         now = datetime.now()
         cur_time = now.strftime("%y%m%d:%H:%M:%S")
 
-        dir_path = f'./{args.result_dir}/{RUN}/{dir_prefix}_{cur_time}'
-        print(f'Directory Path: {dir_path}')
-        dir_path = Path(dir_path)
+        dir_path = Path(f'./{args.result_dir}/{RUN}/{dir_prefix}_{cur_time}')
+        print(f'Directory Path: {str(dir_path)}')
         dir_path.mkdir(parents=True, exist_ok=True)
         arg_path = dir_path / 'args'
         arg_path.write_text(f'{args}\n', encoding='utf-8')

@@ -16,6 +16,7 @@ def reset_seed(
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
@@ -38,7 +39,7 @@ def check_kwargs(
             raise ValueError(f'Required argument values for {not_updated} are missing.')
 
 def parse_arguments(
-    notebook: bool=False
+    return_default: bool=False,
 ) -> object:
     """
     Parse the arguments
@@ -121,7 +122,7 @@ def parse_arguments(
         help='The directory to save interim files'
     )
 
-    if notebook:
+    if return_default:
         args = parser.parse_args([])
     else:
         args = parser.parse_args()

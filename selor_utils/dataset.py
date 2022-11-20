@@ -3,8 +3,6 @@ The module that contains utility functions and classes related to datasets
 """
 from typing import Dict, List, Tuple
 import math
-import functools
-import operator
 from collections import Counter
 import torch
 import torch.nn.functional as F
@@ -272,76 +270,77 @@ class PretrainDataset(Dataset):
         self.sigma = []
         self.n = []
 
-        with torch.no_grad():
-            if self.antecedent_len == 1:
-                self.x = candidate
-                self.mu, self.sigma, self.n = self.__get_answer__(
-                    candidate,
+
+        if self.antecedent_len == 1:
+            self.x = candidate
+            self.mu, self.sigma, self.n = self.__get_answer__(
+                candidate,
+                true_matrix,
+                train_y
+            )
+
+        else:
+            assert n_sample % num_classes == 0
+            bsz = n_sample
+            n_batch = math.ceil(self.n_candidate / bsz)
+
+            sample_dict = {}
+            for i in range(num_classes):
+                sample_dict[i] = ClassSamples(
+                    class_idx=i,
+                    need=(n_sample // num_classes),
+                )
+
+            pbar = tqdm(range(n_sample))
+
+            b_cnt = 0
+            while not all(sample_dict[i].done for i in range(num_classes)):
+                start = (b_cnt % n_batch) * bsz
+                end = min(start + bsz, self.n_candidate)
+                b_cnt += 1
+
+                cand = candidate[start:end]
+                mu, sigma, n = self.__get_answer__(
+                    cand,
                     true_matrix,
                     train_y
                 )
-            else:
-                assert n_sample % num_classes == 0
-                bsz = n_sample
-                n_batch = math.ceil(self.n_candidate / bsz)
 
-                sample_dict = {}
+                max_value, max_index = torch.max(mu, dim=1)
+
+                min_df_mask = (n >= kwargs['min_df'])
+                max_df_mask = (n <= (kwargs['max_df'] * self.n_data))
+                uniform_prob_mask = (max_value != (1 / num_classes))
+                mask = min_df_mask & max_df_mask & uniform_prob_mask
+
                 for i in range(num_classes):
-                    sample_dict[i] = ClassSamples(
-                        class_idx=i,
-                        need=(n_sample // num_classes),
-                    )
+                    if not sample_dict[i].done:
+                        bef = sample_dict[i].num_samples
+                        class_mask = mask & (max_index==i)
+                        sample_dict[i].add(
+                            cand[class_mask],
+                            mu[class_mask],
+                            sigma[class_mask],
+                            n[class_mask]
+                        )
+                        aft = sample_dict[i].num_samples
+                        pbar.update(aft-bef)
 
-                pbar = tqdm(range(n_sample))
+            pbar.close()
 
-                b_cnt = 0
-                while not multi_and([sample_dict[i].done for i in range(num_classes)]):
-                    start = (b_cnt % n_batch) * bsz
-                    end = min(start + bsz, self.n_candidate)
-                    b_cnt += 1
+            self.x = torch.cat([sample_dict[i].x for i in range(num_classes)])
+            self.mu = torch.cat([sample_dict[i].mu for i in range(num_classes)])
+            self.sigma = torch.cat([sample_dict[i].sigma for i in range(num_classes)])
+            self.n = torch.cat([sample_dict[i].n for i in range(num_classes)])
 
-                    cand = candidate[start:end]
-                    mu, sigma, n = self.__get_answer__(
-                        cand,
-                        true_matrix,
-                        train_y
-                    )
+            assert len(self.x) == len(self.mu) == len(self.sigma) == len(self.n) == n_sample
 
-                    max_value, max_index = torch.max(mu, dim=1)
+            rand_idx = torch.randperm(n_sample, device=candidate.device)
 
-                    min_df_mask = (n >= kwargs['min_df'])
-                    max_df_mask = (n <= (kwargs['max_df'] * self.n_data))
-                    uniform_prob_mask = (max_value != (1 / num_classes))
-                    mask = min_df_mask & max_df_mask & uniform_prob_mask
-
-                    for i in range(num_classes):
-                        if not sample_dict[i].done:
-                            bef = sample_dict[i].num_samples
-                            class_mask = mask & (max_index==i)
-                            sample_dict[i].add(
-                                cand[class_mask],
-                                mu[class_mask],
-                                sigma[class_mask],
-                                n[class_mask]
-                            )
-                            aft = sample_dict[i].num_samples
-                            pbar.update(aft-bef)
-
-                pbar.close()
-
-                self.x = torch.cat([sample_dict[i].x for i in range(num_classes)])
-                self.mu = torch.cat([sample_dict[i].mu for i in range(num_classes)])
-                self.sigma = torch.cat([sample_dict[i].sigma for i in range(num_classes)])
-                self.n = torch.cat([sample_dict[i].n for i in range(num_classes)])
-
-                assert len(self.x) == len(self.mu) == len(self.sigma) == len(self.n) == n_sample
-
-                rand_idx = torch.randperm(n_sample, device=candidate.device)
-
-                self.x = self.x[rand_idx]
-                self.mu = self.mu[rand_idx]
-                self.sigma = self.sigma[rand_idx]
-                self.n = self.n[rand_idx]
+            self.x = self.x[rand_idx]
+            self.mu = self.mu[rand_idx]
+            self.sigma = self.sigma[rand_idx]
+            self.n = self.n[rand_idx]
 
         self.x = self.x.cpu()
         self.mu = self.mu.cpu()
@@ -386,14 +385,6 @@ class PretrainDataset(Dataset):
         i=int
     ) -> Tuple[torch.Tensor, ...]:
         return self.x[i], self.mu[i], self.sigma[i], self.n[i]
-
-def multi_and(
-    target_list: List[bool]
-) -> bool:
-    """
-    Returns the result of & operator between elements of the given list.
-    """
-    return functools.reduce(operator.and_, target_list)
 
 def load_data(
     dataset: str='yelp',
@@ -784,8 +775,9 @@ def get_single_context(
     Get a single context for given instance.
     Used to get an base contents for explanation of a single instance.
     """
-    categorical_x_col, numerical_x_col, y_col = tabular_column_type
-    cat_map, _, numerical_max = tabular_info
+    if dataset in TAB_DATASET:
+        categorical_x_col, numerical_x_col, y_col = tabular_column_type
+        cat_map, _, numerical_max = tabular_info
 
     target_context = ''
 

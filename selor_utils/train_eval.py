@@ -35,6 +35,9 @@ class AverageMeter:
         val: float,
         n: int=1
     ):
+        """
+        Update the values
+        """
         self.val = val
         self.sum += val * n
         self.count += n
@@ -166,7 +169,7 @@ def eval_pretrain(
         x = F.pad(x, (0, max_antecedent_len - antecedent_len)).to(gpu)
         x = F.one_hot(x, n_atom).float()
 
-        with torch.no_grad():
+        with torch.inference_mode():
             mu_, sigma_, coverage_ = ce_model(x)
 
             mu_pred.extend(mu_)
@@ -256,7 +259,7 @@ def eval_epoch(
     """
     pbar = tqdm(valid_dataloader)
     model.eval()
-    with torch.no_grad():
+    with torch.inference_mode():
         valid_loss = AverageMeter()
         predictions = []
         target_probs = []
@@ -433,7 +436,7 @@ def eval_model(
 
     pbar = tqdm(test_dataloader)
     model.eval()
-    with torch.no_grad():
+    with torch.inference_mode():
         test_loss = AverageMeter()
         predictions = []
         target_probs = []
@@ -589,7 +592,7 @@ def get_explanation(
     """
     model.eval()
 
-    with torch.no_grad():
+    with torch.inference_mode():
         inputs = [i.to(gpu).unsqueeze(dim=0) for i in inputs]
         outputs, atom_prob_list, _ = model(
             inputs
@@ -653,6 +656,10 @@ def get_all_explanation(
         )
         tf_tokenizer = kwargs['tf_tokenizer']
         atom_tokenizer = kwargs['atom_tokenizer']
+
+        tabular_column_type = None
+        tabular_info = None
+
     elif dataset == 'adult':
         tf_tokenizer = None
         atom_tokenizer = None
@@ -745,7 +752,7 @@ def get_base_embedding(
     h_list = []
 
     model.eval()
-    with torch.no_grad():
+    with torch.inference_mode():
         for batch in tqdm(train_dataloader):
             inputs, y = batch
             inputs = [i.to(gpu) for i in inputs]

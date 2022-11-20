@@ -5,10 +5,15 @@ This repository is the official implementation of **S**elf-**E**xplaining deep m
 ## Environment Setup
 Hardware
 >Intel(R) Xeon(R) Platinum 8268 CPU @ 2.90GHz with 376GB RAM
+>NVIDIA A100 GPU with 40GB memory
 Operating System
 >CentOS Linux release 7.9.2009
 Python Version
 >3.7
+CUDA Version
+>11.0
+PyTorch Version
+>1.9.0
 
 ## Datasets
 Yelp Review Polarity (Kaggle)
@@ -20,27 +25,38 @@ Clickbait News Detection (Kaggle)
 Adult (UCI Machine Learning Repository)
 >https://archive.ics.uci.edu/ml/datasets/adult
 
+## Quick Start
+Run following code to train the base model and the SELOR model.
+```
+python3 run_all.py --dataset <DATASET> --base <BASE_MODEL> --gpu <GPU>
+```
+
 ## Training
 Train the base model with the following command.
 ```
 python3 base.py --dataset <DATASET> --base <BASE_MODEL> --gpu <GPU>
 ```
+
 Extract the embedding of base model for train instances with the following command.
 ```
 python3 extract_base_embedding.py --dataset <DATASET> --base <BASE_MODEL> --gpu <GPU>
 ```
+
 Build the atom pool with the following command.
 ```
-python3 build_atom_pool.py --dataset <DATASET> --base_model <BASE_MODEL>
+python3 build_atom_pool.py --dataset <DATASET> --base <BASE_MODEL>
 ```
-Sample atoms with the following command.
+
+Sample atoms to pretrain the consequent estimator with the following command.
 ```
 python3 sample_antecedents.py --dataset <DATASET> --base <BASE_MODEL> --gpu <GPU>
 ```
-Pretrain the consequent estimator using sampled atoms with the following command.
+
+Pretrain a consequent estimator with the following command.
 ```
 python3 pretrain_consequent_estimator.py --dataset <DATASET> --base <BASE_MODEL> --gpu <GPU>
 ```
+
 Train the SELOR model with the following command.
 ```
 python3 selor.py --dataset <DATASET> --base <BASE_MODEL> --gpu <GPU>
@@ -50,7 +66,7 @@ python3 selor.py --dataset <DATASET> --base <BASE_MODEL> --gpu <GPU>
 Evaluation results are automatically provided after training.
 If you want to produce only evaluation result of a trained model, please use the following command.
 ```
-python3 selor.py --dataset <DATASET> --base_model <BASE_MODEL> --gpu <GPU> --only_eval
+python3 selor.py --dataset <DATASET> --base <BASE_MODEL> --gpu <GPU> --only_eval
 ```
 
 ## Result
