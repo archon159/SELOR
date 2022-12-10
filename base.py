@@ -1,4 +1,7 @@
 """
+Copyright (c) Microsoft Corporation.
+Licensed under the MIT License.
+
 The script to train base models
 """
 from pathlib import Path

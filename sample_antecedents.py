@@ -1,4 +1,7 @@
 """
+Copyright (c) Microsoft Corporation.
+Licensed under the MIT License.
+
 The script to sample antecedents for pretraining of consequent estimator
 """
 from pathlib import Path

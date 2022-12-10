@@ -1,4 +1,7 @@
 """
+Copyright (c) Microsoft Corporation.
+Licensed under the MIT License.
+
 Run all files that need to train a selor model with given arguments
 """
 import os

@@ -1,4 +1,7 @@
 """
+Copyright (c) Microsoft Corporation.
+Licensed under the MIT License.
+
 The module that contains utility functions and classes related to atoms
 """
 from collections import OrderedDict, defaultdict, Counter

@@ -1,4 +1,7 @@
 """
+Copyright (c) Microsoft Corporation.
+Licensed under the MIT License.
+
 The module that contains utility functions and classes related to datasets
 """
 from typing import Dict, List, Tuple
@@ -366,9 +369,23 @@ class PretrainDataset(Dataset):
         sigma = []
         for mask in satis_mask:
             satis_ans = train_y[mask]
-            satis_ans = F.one_hot(satis_ans.long(), num_classes=self.num_classes).float()
-            mu.append(torch.mean(satis_ans, dim=0))
-            sigma.append(torch.std(satis_ans, dim=0, unbiased=False))
+            if len(satis_ans) == 0:
+                mu.append(
+                    torch.ones(
+                        self.num_classes,
+                        device=satis_ans.device
+                    ) * (1 / self.num_classes)
+                )
+                sigma.append(
+                    torch.zeros(
+                        self.num_classes,
+                        device=satis_ans.device
+                    )
+                )
+            else:
+                satis_ans = F.one_hot(satis_ans.long(), num_classes=self.num_classes).float()
+                mu.append(torch.mean(satis_ans, dim=0))
+                sigma.append(torch.std(satis_ans, dim=0, unbiased=False))
 
         mu = torch.stack(mu)
         sigma = torch.stack(sigma)
@@ -467,6 +484,7 @@ def load_data(
             random_state=seed,
             stratify=number_data_df[y_col[0]]
         )
+
         valid_df, test_df = train_test_split(
             test_df,
             test_size=0.5,

@@ -1,4 +1,7 @@
 """
+Copyright (c) Microsoft Corporation.
+Licensed under the MIT License.
+
 The module that contains utility functions related to model training and evaluation
 """
 import time
