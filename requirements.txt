@@ -14,7 +14,7 @@ importlib-metadata==5.0.0
 isort==5.10.1
 joblib==1.2.0
 jupyter-telemetry==0.1.0
-jupyterhub==1.4.1
+jupyterhub==1.5.0
 lazy-object-proxy==1.8.0
 Mako==1.1.4
 mccabe==0.7.0
