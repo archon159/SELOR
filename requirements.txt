@@ -24,7 +24,7 @@ pamela==1.0.0
 pandas==1.1.4
 platformdirs==2.5.4
 prettytable==3.5.0
-protobuf==3.19.1
+protobuf==3.19.5
 pylint==2.15.5
 pyOpenSSL==20.0.1
 pyparsing==3.0.9
