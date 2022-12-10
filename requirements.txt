@@ -16,7 +16,7 @@ joblib==1.2.0
 jupyter-telemetry==0.1.0
 jupyterhub==1.4.1
 lazy-object-proxy==1.8.0
-Mako==1.1.4
+Mako==1.2.2
 mccabe==0.7.0
 numpy==1.21.6
 packaging==21.3
