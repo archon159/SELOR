@@ -18,7 +18,7 @@ jupyterhub==1.4.1
 lazy-object-proxy==1.8.0
 Mako==1.1.4
 mccabe==0.7.0
-numpy==1.21.6
+numpy==1.22.0
 packaging==21.3
 pamela==1.0.0
 pandas==1.1.4
