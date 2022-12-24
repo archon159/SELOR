@@ -218,7 +218,12 @@ class AtomSelector(nn.Module):
             x_[:, 0] = 1.0
 
         x[torch.logical_not(x_)] = float('-inf')
-        x = F.gumbel_softmax(logits=x, tau=1, hard=True, dim=1)
+        if self.training:
+            x = F.gumbel_softmax(logits=x, tau=1, hard=True, dim=1)
+        else:
+            bsz, n_atom = x.shape
+            _, x = torch.max(x, dim=-1)
+            x = F.one_hot(x, num_classes=n_atom)
 
         return x
 
