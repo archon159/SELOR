@@ -223,7 +223,7 @@ class AtomSelector(nn.Module):
         else:
             bsz, n_atom = x.shape
             _, x = torch.max(x, dim=-1)
-            x = F.one_hot(x, num_classes=n_atom)
+            x = F.one_hot(x, num_classes=n_atom).float()
 
         return x
 
