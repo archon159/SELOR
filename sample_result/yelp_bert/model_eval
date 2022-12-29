@@ -1,0 +1,25 @@
+Avg Test Loss: 0.1924
+Evaluation Time: 109.946 s
+Confidence: 0.7569
+Consistency: 1.0000
+Duplicate: 1.1153
+Unique: 3.8847
+Coverage: 0.0040
+Length
+0: 0.0002
+1: 0.0359
+2: 0.0427
+3: 0.0542
+4: 0.8669
+Prediction Performance:
+              precision    recall  f1-score   support
+
+    Negative     0.9583    0.9707    0.9645      9500
+    Positive     0.9704    0.9578    0.9640      9500
+
+    accuracy                         0.9643     19000
+   macro avg     0.9643    0.9643    0.9643     19000
+weighted avg     0.9643    0.9643    0.9643     19000
+
+ROC-AUC: 0.9830
+PR-AUC: 0.9746

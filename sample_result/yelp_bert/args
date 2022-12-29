@@ -1,0 +1,1 @@
+Namespace(antecedent_len=4, base='bert', batch_size=16, dataset='yelp', epochs=10, gamma=0.95, gpu=4, hidden_dim=512, learning_rate=1e-05, max_df=0.95, min_df=200, num_atoms=5000, num_workers=8, only_eval=False, pretrain_samples=10000, result_dir='result', save_dir='save_dir', seed=7, weight_decay=0.0)

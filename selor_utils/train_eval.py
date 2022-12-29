@@ -399,7 +399,7 @@ def train(
         train_log.info(f'Valid PR-AUC: {pr_auc:.4f}')
         train_log.info('\n')
 
-        model_path = kwargs['dir_path'] / 'model_epoch_{epoch}.pt'
+        model_path = kwargs['dir_path'] / f'model_epoch_{epoch}.pt'
         torch.save(model.state_dict(), str(model_path))
 
         if valid_loss.avg < min_valid_loss:
