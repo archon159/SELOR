@@ -1,0 +1,104 @@
+Start Training
+
+Epoch 0
+Training Time: 103.403 s
+Validation Time: 103.403 s
+Train Loss: 0.405
+Valid Loss: 0.343
+Valid Macro-F1: 0.7931
+Valid ROC-AUC: 0.8943
+Valid PR-AUC: 0.7311
+
+
+Epoch 1
+Training Time: 88.945 s
+Validation Time: 88.945 s
+Train Loss: 0.353
+Valid Loss: 0.329
+Valid Macro-F1: 0.8013
+Valid ROC-AUC: 0.9083
+Valid PR-AUC: 0.7448
+
+
+Epoch 2
+Training Time: 87.054 s
+Validation Time: 87.054 s
+Train Loss: 0.342
+Valid Loss: 0.322
+Valid Macro-F1: 0.8080
+Valid ROC-AUC: 0.9112
+Valid PR-AUC: 0.7512
+
+
+Epoch 3
+Training Time: 89.128 s
+Validation Time: 89.128 s
+Train Loss: 0.338
+Valid Loss: 0.321
+Valid Macro-F1: 0.8089
+Valid ROC-AUC: 0.9127
+Valid PR-AUC: 0.7535
+
+
+Epoch 4
+Training Time: 90.589 s
+Validation Time: 90.589 s
+Train Loss: 0.332
+Valid Loss: 0.319
+Valid Macro-F1: 0.8074
+Valid ROC-AUC: 0.9137
+Valid PR-AUC: 0.7519
+
+
+Epoch 5
+Training Time: 92.128 s
+Validation Time: 92.128 s
+Train Loss: 0.333
+Valid Loss: 0.312
+Valid Macro-F1: 0.8110
+Valid ROC-AUC: 0.9110
+Valid PR-AUC: 0.7521
+
+
+Epoch 6
+Training Time: 91.731 s
+Validation Time: 91.731 s
+Train Loss: 0.330
+Valid Loss: 0.321
+Valid Macro-F1: 0.8038
+Valid ROC-AUC: 0.9119
+Valid PR-AUC: 0.7483
+
+
+Epoch 7
+Training Time: 89.114 s
+Validation Time: 89.114 s
+Train Loss: 0.329
+Valid Loss: 0.311
+Valid Macro-F1: 0.8110
+Valid ROC-AUC: 0.9100
+Valid PR-AUC: 0.7494
+
+
+Epoch 8
+Training Time: 89.499 s
+Validation Time: 89.499 s
+Train Loss: 0.327
+Valid Loss: 0.312
+Valid Macro-F1: 0.8111
+Valid ROC-AUC: 0.9112
+Valid PR-AUC: 0.7505
+
+
+Epoch 9
+Training Time: 89.112 s
+Validation Time: 89.112 s
+Train Loss: 0.325
+Valid Loss: 0.309
+Valid Macro-F1: 0.8099
+Valid ROC-AUC: 0.9108
+Valid PR-AUC: 0.7472
+
+
+Average Train Time: 91.070 s
+Average Valid Time: 5.425 s
