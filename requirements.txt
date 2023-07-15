@@ -4,7 +4,7 @@ certifi @ file:///croot/certifi_1665076670883/work/certifi
 certipy==0.1.3
 charset-normalizer==2.1.1
 click==8.1.3
-cryptography==41.0.0
+cryptography==41.0.2
 dill==0.3.6
 filelock==3.8.0
 greenlet==1.1.0
