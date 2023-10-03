@@ -53,7 +53,7 @@ tqdm==4.62.3
 transformers==4.30.0
 typed-ast==1.5.4
 typing_extensions==4.4.0
-urllib3==1.26.12
+urllib3==1.26.17
 wcwidth==0.2.5
 wrapt==1.14.1
 zipp==3.10.0
